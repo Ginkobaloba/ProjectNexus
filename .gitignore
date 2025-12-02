@@ -1,0 +1,31 @@
+# General
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.DS_Store
+*.env
+.env
+venv/
+*.log
+*.sqlite3
+
+# Secrets / Tokens
+Access_Token.txt
+*.key
+*.secret
+*.pem
+*.envrc
+
+# Python tooling
+.ipynb_checkpoints/
+.poetry/
+pytest_cache/
+
+# VSCode
+.vscode/
+
+# Build / Dist
+build/
+dist/
+*.egg-info/

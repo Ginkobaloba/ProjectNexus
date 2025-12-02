@@ -1,0 +1,9 @@
+paho-mqtt
+fastapi
+uvicorn
+pydantic
+black
+flake8
+mypy
+pytest
+loguru
