@@ -1,4 +1,4 @@
-# nodes/nas-memory/episodic_store.py
+# nodes/nas_memory/episodic_store.py
 import json
 import time
 import uuid

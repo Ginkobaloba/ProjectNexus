@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only brainstem node code
-COPY ../nodes/brainstem_4070 /app/brainstem_4070
+COPY nodes/brainstem_4070 /app/brainstem_4070
 
 # Install dependencies
 RUN pip install --no-cache-dir \

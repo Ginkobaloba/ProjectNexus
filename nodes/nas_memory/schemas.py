@@ -1,4 +1,4 @@
-# nodes/nas-memory/schemas.py
+# nodes/nas_memory/schemas.py
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 

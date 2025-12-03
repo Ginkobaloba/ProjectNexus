@@ -1,6 +1,6 @@
-# nodes/nas-memory/config.py
+# nodes/nas_memory/config.py
 from pathlib import Path
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path("/data/nas")
 
     # Chroma settings
-    chroma_persist_dir: Path = Path("/data/nas/chroma")
+    chroma_persist_dir: Path = data_dir / "chroma"
     chroma_collection_name: str = "nexus_semantic_memory"
 
     # Episodic log file

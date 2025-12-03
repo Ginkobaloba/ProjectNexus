@@ -1,4 +1,4 @@
-# nodes/nas-memory/server.py
+# nodes/nas_memory/server.py
 import logging
 from typing import List
 
@@ -19,7 +19,7 @@ from .schemas import (
 )
 
 logging.basicConfig(level=settings.log_level)
-logger = logging.getLogger("nas-memory")
+logger = logging.getLogger("nas_memory")
 
 
 app = FastAPI(

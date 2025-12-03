@@ -1,10 +1,8 @@
-# nodes/nas-memory/semantic_store.py
+# nodes/nas_memory/semantic_store.py
 from typing import Any, Dict, List, Tuple
 import uuid
 
 import chromadb
-from chromadb.config import Settings as ChromaSettings
-
 from .config import settings
 
 
@@ -15,12 +13,7 @@ _collection = None
 def get_client() -> chromadb.Client:
     global _client
     if _client is None:
-        _client = chromadb.Client(
-            ChromaSettings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory=str(settings.chroma_persist_dir),
-            )
-        )
+        _client = chromadb.PersistentClient(path=str(settings.chroma_persist_dir))
     return _client
 
 
@@ -29,10 +22,10 @@ def get_collection():
     if _collection is None:
         client = get_client()
         _collection = client.get_or_create_collection(
-            name=settings.chroma_collection_name
+            name=settings.chroma_collection_name,
+            metadata={"hnsw:space": "cosine"}  # recommended default
         )
     return _collection
-
 
 def write_items(
     items: List[Tuple[str, str, List[float], Dict[str, Any]]]
@@ -55,19 +48,20 @@ def write_items(
         metadatas=metadatas,
     )
 
-    # Persist to disk
-    get_client().persist()
     return ids
+
 
 
 def search(
     query_embedding: List[float],
     top_k: int = 5,
-) -> Tuple[List[str], List[str], List[float], List[Dict[str, Any]]]:
+):
     col = get_collection()
+
     res = col.query(
         query_embeddings=[query_embedding],
         n_results=top_k,
+        include=["documents", "metadatas", "distances"]
     )
 
     ids = res.get("ids", [[]])[0]

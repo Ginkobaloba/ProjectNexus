@@ -1,26 +1,29 @@
-# docker/brainstem.Dockerfile
+# NAS Dockerfile
 FROM python:3.11-slim
 
+# Set working dir inside container
 WORKDIR /app
 
-# System deps if needed
+# Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only brainstem node code
-COPY ./nodes/brainstem_4070 /app/brainstem_4070
+# Copy ONLY nas-memory folder
+COPY ./nodes/nas_memory /app/nas_memory
 
-# Install dependencies
+# Install NAS dependencies
 RUN pip install --no-cache-dir \
     fastapi \
     "uvicorn[standard]" \
-    sentence-transformers \
+    chromadb \
     pydantic \
     pydantic-settings
 
-# Expose brainstem port
-EXPOSE 5001
+# Expose NAS port
+EXPOSE 5002
 
-CMD ["uvicorn", "brainstem_4070.server:app", "--host", "0.0.0.0", "--port", "5001"]
+# Start the NAS API
+CMD ["uvicorn", "nas_memory.server:app", "--host", "0.0.0.0", "--port", "5002"]
+
 
