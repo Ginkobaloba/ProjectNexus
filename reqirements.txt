@@ -10,4 +10,4 @@ loguru
 fastapi
 uvicorn[standard]
 sentence-transformers
-pydantic
+pydantic-settings

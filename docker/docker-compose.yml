@@ -13,6 +13,19 @@ services:
     networks:
       - nexusnet
 
+  nas:
+    build:
+      context: ..
+      dockerfile: docker/nas.Dockerfile
+    container_name: nas_memory
+    ports:
+      - "5002:5002"
+    volumes:
+      - ../data/nas:/data/nas
+    networks:
+      - nexusnet
+
+      
 networks:
   nexusnet:
     driver: bridge
