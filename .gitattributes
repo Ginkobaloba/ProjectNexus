@@ -1,0 +1,57 @@
+##############################################
+# Line endings — enforce LF everywhere
+##############################################
+* text=auto eol=lf
+
+##############################################
+# Binary files (Git should NOT diff these)
+##############################################
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.docx binary
+*.bin binary
+*.chroma binary
+*.npy binary
+*.npz binary
+*.pickle binary
+*.pkl binary
+
+##############################################
+# Vector DB + embeddings storage
+##############################################
+data/nas/chroma/* binary
+
+##############################################
+# Model files — store via Git LFS
+##############################################
+*.pt filter=lfs diff=lfs merge=lfs
+*.safetensors filter=lfs diff=lfs merge=lfs
+*.ckpt filter=lfs diff=lfs merge=lfs
+*.h5 filter=lfs diff=lfs merge=lfs
+*.onnx filter=lfs diff=lfs merge=lfs
+
+##############################################
+# Docs classification
+##############################################
+*.md linguist-documentation
+
+##############################################
+# Code files — ensure proper text handling
+##############################################
+*.py text
+*.json text
+*.yml text
+*.yaml text
+*.toml text
+*.cfg text
+*.ini text
+*.sh text
+*.bat text
+
+##############################################
+# Prevent GitHub from counting data as code
+##############################################
+data/* linguist-vendored

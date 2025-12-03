@@ -37,3 +37,133 @@ data/nas/chroma/*
 # General vector database junk
 *.chroma
 *.chroma.lock
+
+############################################################
+# Project Nexus — .gitignore
+# Covers Python, Docker, FastAPI, Vector DBs, VSCode, models
+############################################################
+
+###############
+# PYTHON BUILD
+###############
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyd
+*.sqlite3
+*.egg-info/
+*.egg
+*.npy
+*.npz
+
+# Virtual envs
+venv/
+env/
+.venv/
+ENV/
+
+# Jupyter artifacts (if ever used)
+.ipynb_checkpoints/
+
+###############
+# DOCKER
+###############
+# Docker build output
+*.tar
+*.img
+*.log
+
+# Local docker volumes (if stored inside repo)
+docker-data/
+docker_volume/
+docker-compose.override.yml
+
+##########################
+# IDE / EDITOR SETTINGS
+##########################
+.vscode/
+.idea/
+*.swp
+*.swo
+
+##########################
+# FASTAPI / UVICORN LOGS
+##########################
+*.log
+logs/
+uvicorn_log/
+
+##########################
+# SECRET FILES
+##########################
+# API tokens, keys, creds — NEVER commit these
+*.key
+*.secret
+*.pem
+*.env
+.envrc
+Access_Token.txt
+secrets.json
+
+##########################
+# HUGGINGFACE / MODEL CACHE
+##########################
+huggingface/
+hf_cache/
+models/
+cache/
+data/models/
+~/.cache/huggingface/
+
+##########################
+# VECTOR DATABASES (ABSOLUTELY NEVER COMMIT)
+##########################
+
+# ChromaDB persistence
+data/nas/chroma/
+data/nas/chroma/*
+
+# Milvus / FAISS (future-proof)
+faiss_index/
+milvus_data/
+vector_store/
+
+##########################
+# TEMP DATA / EPHEMERAL STATE
+##########################
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Temporary export files
+exports/
+output/
+results/
+
+##########################
+# PROJECT NEXUS SPECIFIC
+##########################
+
+# Node runtime state
+state/
+runtime/
+sessions/
+
+# Episodic logs (optional to track — up to you)
+data/nas/episodic.jsonl
+
+# If you don’t want episodic logs committed, uncomment:
+# data/nas/episodic.jsonl
+
+##########################
+# OS FILES
+##########################
+.DS_Store
+Thumbs.db
+desktop.ini
+
+############################################################
+# END OF .gitignore
+############################################################

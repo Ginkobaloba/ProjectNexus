@@ -1,0 +1,26 @@
+# Code ownership for Project Nexus
+# Syntax: <pattern> <owner>
+
+# Root owner
+* @ginkobaloba
+
+# Shared core logic
+/core/ @ginkobaloba
+
+# Brainstem nodes
+/nodes/brainstem_* @ginkobaloba
+
+# NAS Memory node
+/nodes/nas-memory/ @ginkobaloba
+
+# Future Cortex nodes
+/nodes/cortex_*/ @ginkobaloba
+
+# Docker infrastructure
+/docker/ @ginkobaloba
+
+# Docs
+/README.md @ginkobaloba
+/SECURITY.md @ginkobaloba
+/CONTRIBUTING.md @ginkobaloba
+
