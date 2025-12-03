@@ -8,7 +8,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only brainstem node code
+
+# Copy shared core module
+COPY core /app/core
+# Copy brainstem node code
 COPY nodes/brainstem_4070 /app/brainstem_4070
 
 # Install dependencies
@@ -18,6 +21,9 @@ RUN pip install --no-cache-dir \
     sentence-transformers \
     pydantic \
     pydantic-settings
+
+# Add /app to Python import path
+ENV PYTHONPATH="/app"
 
 # Expose brainstem port
 EXPOSE 5001

@@ -29,3 +29,11 @@ pytest_cache/
 build/
 dist/
 *.egg-info/
+
+# ChromaDB persistence
+data/nas/chroma/
+data/nas/chroma/*
+
+# General vector database junk
+*.chroma
+*.chroma.lock

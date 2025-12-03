@@ -6,6 +6,7 @@ import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from core.nas_client import NASClient
 from brainstem_4070.config import settings
 from brainstem_4070.embed import embed_texts
 from brainstem_4070.stm_buffer import STMItem, stm_buffer
@@ -20,6 +21,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
+nas = NASClient(settings.nas_url)
 
 class HealthResponse(BaseModel):
     status: str
@@ -57,12 +59,41 @@ def health_check():
     )
 
 
-@app.post("/embed", response_model=EmbedResponse)
-def embed_endpoint(req: EmbedRequest):
-    if not req.texts:
-        raise HTTPException(status_code=400, detail="No texts provided")
-    embeddings = embed_texts(req.texts)
-    return EmbedResponse(embeddings=embeddings)
+@app.post("/embed")
+def embed(req: EmbedRequest):
+    #create embedding vectors
+    vectors = embed_texts(req.texts)
+
+    memory_ids = []
+
+    #for each embedding, write a semantic memory to NAS
+    for text, vector in zip(req.texts, vectors):
+
+        # Write semantic memories to NAS
+        mem_id = nas.write_semantic(
+            text=text,
+            embedding=vector,
+            metadata={"source": "brainstem_4070"}
+        )
+        memory_ids.append(mem_id)
+
+        # Log the event in episodic memory
+        nas.log_event(
+            event_type="semantic_memory_created",
+            details={
+                "memory_id": mem_id,
+                "vector_dim": len(vector),
+                "text_snippet": text[:50],
+                "source": "brainstem_4070",
+                "tags": [],  # Could add tag processing later                
+            }
+        )
+
+    return {
+        "embeddings": vectors,
+        "memory_ids": memory_ids,
+        }
+
 
 
 @app.post("/stm/write", response_model=STMWriteResponse)
