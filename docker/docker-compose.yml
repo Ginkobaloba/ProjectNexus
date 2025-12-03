@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  brainstem:
+    build:
+      context: ..
+      dockerfile: docker/brainstem.Dockerfile
+    container_name: brainstem_4070
+    ports:
+      - "5001:5001"
+    environment:
+      - BRAINSTEM_DEVICE=cpu
+    networks:
+      - nexusnet
+
+networks:
+  nexusnet:
+    driver: bridge

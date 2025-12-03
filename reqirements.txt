@@ -7,3 +7,7 @@ flake8
 mypy
 pytest
 loguru
+fastapi
+uvicorn[standard]
+sentence-transformers
+pydantic
