@@ -164,6 +164,34 @@ data/nas/episodic.jsonl
 Thumbs.db
 desktop.ini
 
+##########################
+# OFFICE LOCKFILES
+##########################
+~$*.docx
+~$*.xlsx
+~$*.pptx
+
+##########################
+# SECRETS (extra filename patterns beyond the SECRET FILES section above)
+##########################
+Google Keys.txt
+.mcp.json
+.claude/settings.local.json
+
+##########################
+# MODEL WEIGHTS (pair with SOPS for encrypted config; never commit raw weights)
+##########################
+Nexus-LLM-Runtime-4090/models/
+infra/cortex-runtime/models/
+*.safetensors
+*.gguf
+*.onnx
+
+##########################
+# N8N BACKUP ARCHIVES
+##########################
+*.n8n_backup*.tar.gz
+
 ############################################################
 # END OF .gitignore
 ############################################################
