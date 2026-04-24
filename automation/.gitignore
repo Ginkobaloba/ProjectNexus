@@ -1,0 +1,40 @@
+# Environment
+.env
+.env.local
+.env.production
+.env.development
+
+# n8n data directory
+.n8n/
+n8n_data/
+n8n_storage/
+
+# Node modules
+node_modules/
+
+# Backups
+*.tar.gz
+*.zip
+
+# Logs
+*.log
+logs/
+log/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor junk
+.vscode/
+.idea/
+
+# MCP config (contains API keys)
+.mcp.json
+
+# Claude Code local settings (machine-specific permissions)
+.claude/
+
+# Docker
+docker-data/
+*.pid

@@ -1,0 +1,14 @@
+[Unit]
+Description=Nexus Cortex LLM - Qwen3-Coder-30B-A3B W4A16
+After=network.target
+
+[Service]
+Type=simple
+User=drew
+Environment=HF_HOME=/home/drew/.cache/huggingface
+ExecStart=/home/drew/cortex-llm/bin/vllm serve nm-testing/Qwen3-Coder-30B-A3B-Instruct-W4A16-awq --port 8001 --host 0.0.0.0 --max-model-len 32768 --gpu-memory-utilization 0.90 --served-model-name cortex
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

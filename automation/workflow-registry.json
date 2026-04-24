@@ -1,0 +1,2763 @@
+{
+  "version": "2.0",
+  "schemaVersion": 2,
+  "lastUpdated": "2026-02-20T20:00:00Z",
+  "executorGuide": {
+    "description": "Routing taxonomy \u2014 which compute resource handles which task type",
+    "executors": {
+      "brainstem": {
+        "model": "Qwen3-4B-noFP",
+        "endpoint": "BRAINSTEM_LLM_URL",
+        "host": "192.168.1.251:8000",
+        "hardware": "RTX 4070",
+        "bestFor": [
+          "classification",
+          "labeling",
+          "triage",
+          "short summarization",
+          "yes/no decisions",
+          "extraction",
+          "sentiment",
+          "routing",
+          "validation"
+        ]
+      },
+      "cortex": {
+        "model": "Qwen3-Coder-30B-A3B W4A16",
+        "endpoint": "CORTEX_LLM_URL",
+        "host": "host.docker.internal:8001",
+        "hardware": "RTX 4090 (this machine)",
+        "bestFor": [
+          "code generation",
+          "refactoring",
+          "workflow JSON building",
+          "documentation writing",
+          "README generation",
+          "complex reasoning",
+          "algorithm implementation",
+          "multi-step planning"
+        ]
+      },
+      "council": {
+        "model": "Claude 3.5 Sonnet + Gemini 2.0 Flash + GPT-4o (LLM.Council)",
+        "workflowId": "13Bg7qtxJYvsFscJ",
+        "bestFor": [
+          "high-stakes decisions",
+          "multi-perspective analysis",
+          "consensus on ambiguous questions"
+        ],
+        "cost": "cloud API tokens \u2014 use sparingly"
+      },
+      "claude-sonnet": {
+        "model": "claude-sonnet-4-6",
+        "bestFor": [
+          "novel system architecture",
+          "complex multi-turn planning",
+          "fallback when Cortex fails",
+          "tasks requiring broad world knowledge"
+        ],
+        "cost": "Claude tokens \u2014 minimize; only escalate from Cortex when genuinely needed"
+      },
+      "claude-opus": {
+        "model": "claude-opus-4-6",
+        "bestFor": [
+          "explicit escalation from Sonnet",
+          "critical decisions all other models struggle with"
+        ],
+        "cost": "highest cost \u2014 reserved for explicit escalations only"
+      },
+      "none": {
+        "description": "Pure API operation \u2014 no LLM involved"
+      }
+    },
+    "routingRules": [
+      "Email classification \u2192 brainstem",
+      "Code generation \u2192 cortex",
+      "Workflow JSON building \u2192 cortex (Nexus.Builder)",
+      "Simple data operations (fetch, store, transform) \u2192 none",
+      "High-stakes multi-model decisions \u2192 council",
+      "Novel architecture / system design \u2192 claude-sonnet",
+      "Only escalate to Claude when: task is genuinely novel, OR Cortex has failed twice, OR user explicitly requests it",
+      "Opus: reserved for LLM.Council escalations and explicit user requests only"
+    ]
+  },
+  "nodeWhitelist": [
+    "n8n-nodes-base.executeWorkflowTrigger",
+    "n8n-nodes-base.set",
+    "n8n-nodes-base.code",
+    "n8n-nodes-base.httpRequest",
+    "n8n-nodes-base.gmail",
+    "n8n-nodes-base.googleCalendar",
+    "n8n-nodes-base.merge",
+    "n8n-nodes-base.if",
+    "n8n-nodes-base.switch",
+    "n8n-nodes-base.noOp"
+  ],
+  "workflows": {
+    "Email.Send": {
+      "n8nId": "0G0Ka32a3mYhQhOa",
+      "description": "Send an email via Gmail",
+      "input": {
+        "to": {
+          "type": "string",
+          "required": true,
+          "description": "Recipient email address(es), comma-separated"
+        },
+        "subject": {
+          "type": "string",
+          "required": true,
+          "description": "Email subject line"
+        },
+        "body": {
+          "type": "string",
+          "required": true,
+          "description": "Email body (plain text or HTML)"
+        },
+        "cc": {
+          "type": "string",
+          "required": false,
+          "description": "CC recipients, comma-separated"
+        },
+        "bcc": {
+          "type": "string",
+          "required": false,
+          "description": "BCC recipients, comma-separated"
+        }
+      },
+      "output": {
+        "messageId": {
+          "type": "string",
+          "description": "Gmail message ID"
+        },
+        "threadId": {
+          "type": "string",
+          "description": "Gmail thread ID"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "sent",
+            "error"
+          ],
+          "description": "Result status"
+        }
+      },
+      "tags": [
+        "email",
+        "gmail",
+        "send"
+      ],
+      "credentialRef": "gmail_main",
+      "semanticDescription": "Composes and delivers a new outbound email message to one or more recipients via the Gmail API, supporting plain text or HTML body content. Use this workflow when the goal is to send a brand-new message to an address. Do NOT use this for replying to an existing thread \u2014 use Email.Reply instead. Requires recipient address, subject, and body; CC and BCC are optional.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "human",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Email.Get": {
+      "n8nId": "GxrpXyYs4TmWtCXQ",
+      "description": "Get a single email by message ID",
+      "input": {
+        "messageId": {
+          "type": "string",
+          "required": true,
+          "description": "Gmail message ID to retrieve"
+        }
+      },
+      "output": {
+        "messageId": {
+          "type": "string",
+          "description": "Gmail message ID"
+        },
+        "threadId": {
+          "type": "string",
+          "description": "Gmail thread ID"
+        },
+        "from": {
+          "type": "string",
+          "description": "Sender email address"
+        },
+        "to": {
+          "type": "string",
+          "description": "Recipient email address(es)"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Email subject line"
+        },
+        "body": {
+          "type": "string",
+          "description": "Email body text"
+        },
+        "date": {
+          "type": "string",
+          "description": "Email date (ISO 8601)"
+        },
+        "labels": {
+          "type": "array",
+          "description": "Array of label IDs on this message"
+        }
+      },
+      "tags": [
+        "email",
+        "gmail",
+        "get",
+        "read"
+      ],
+      "credentialRef": "gmail_main",
+      "semanticDescription": "Retrieves a single Gmail message by its message ID and returns the full parsed content including sender, recipient, subject, body text, date, and current label IDs. Use this when you have a known message ID and need the complete details of that specific email. For browsing or finding messages without a known ID, use Email.List or Email.Search instead. Returns a fully-parsed message object with all header fields at the top level.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "human",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Email.List": {
+      "n8nId": "90vLGzH19vJNqVc1",
+      "description": "List recent emails from Gmail inbox",
+      "input": {
+        "limit": {
+          "type": "number",
+          "required": false,
+          "description": "Max emails to return (default 10, max 50)"
+        },
+        "labelIds": {
+          "type": "string",
+          "required": false,
+          "description": "Filter by label ID (e.g. INBOX, UNREAD)"
+        },
+        "query": {
+          "type": "string",
+          "required": false,
+          "description": "Gmail search query (e.g. 'is:unread')"
+        }
+      },
+      "output": {
+        "messages": {
+          "type": "array",
+          "description": "Array of {messageId, from, subject, snippet, date}"
+        }
+      },
+      "tags": [
+        "email",
+        "gmail",
+        "list",
+        "inbox"
+      ],
+      "credentialRef": "gmail_main",
+      "semanticDescription": "Returns a paginated list of recent emails from Gmail with summary fields (message ID, sender, subject, snippet, date) for each message. Use this for browsing recent mail, checking what's in the inbox, or getting an overview without knowing specific message IDs. All inputs are optional \u2014 calling with no parameters returns the 10 most recent inbox messages. For targeted searching by content or sender, prefer Email.Search instead.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "human",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Email.Search": {
+      "n8nId": "1RQlpK2HU3Cu4qKC",
+      "description": "Search emails using Gmail query syntax",
+      "input": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "Gmail search query (e.g. 'from:user@example.com subject:invoice')"
+        },
+        "limit": {
+          "type": "number",
+          "required": false,
+          "description": "Max results to return (default 10, max 50)"
+        }
+      },
+      "output": {
+        "messages": {
+          "type": "array",
+          "description": "Array of {messageId, from, subject, snippet, date}"
+        }
+      },
+      "tags": [
+        "email",
+        "gmail",
+        "search",
+        "query"
+      ],
+      "credentialRef": "gmail_main",
+      "semanticDescription": "Searches Gmail using the full Gmail query syntax (e.g. 'from:boss@company.com subject:invoice is:unread after:2026/01/01') and returns matching messages as summary objects. Use this when you need to find specific emails by content, sender, date range, or any other Gmail-supported filter criterion. Unlike Email.List which browses recent mail, Email.Search targets a precise subset. Requires a query string; results are summaries \u2014 fetch a full message with Email.Get if the body is needed.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "human",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Email.Label": {
+      "n8nId": "oBbkedhulUupMiNU",
+      "description": "Add or remove labels on a Gmail message",
+      "input": {
+        "messageId": {
+          "type": "string",
+          "required": true,
+          "description": "Gmail message ID to modify"
+        },
+        "addLabels": {
+          "type": "array",
+          "required": false,
+          "description": "Label IDs to add (e.g. ['STARRED', 'IMPORTANT'])"
+        },
+        "removeLabels": {
+          "type": "array",
+          "required": false,
+          "description": "Label IDs to remove (e.g. ['UNREAD'])"
+        }
+      },
+      "output": {
+        "messageId": {
+          "type": "string",
+          "description": "Gmail message ID"
+        },
+        "currentLabels": {
+          "type": "array",
+          "description": "Labels currently on the message after modification"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "updated",
+            "error"
+          ],
+          "description": "Result status"
+        }
+      },
+      "tags": [
+        "email",
+        "gmail",
+        "label",
+        "organize"
+      ],
+      "credentialRef": "gmail_main",
+      "semanticDescription": "Adds and/or removes Gmail label IDs on a specific message, then returns the message's updated label set. Use this to mark messages as read/unread, star them, apply custom organizational labels, or move them between categories. Requires the message ID; at least one of addLabels or removeLabels should be provided. This workflow calls the Gmail modify API directly via HTTP Request since the native Gmail node does not support label modification.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "human",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Email.Reply": {
+      "n8nId": "OMahM1prJ6QecQ2Y",
+      "description": "Reply to an existing email thread",
+      "input": {
+        "messageId": {
+          "type": "string",
+          "required": true,
+          "description": "Gmail message ID to reply to"
+        },
+        "body": {
+          "type": "string",
+          "required": true,
+          "description": "Reply body (plain text or HTML)"
+        }
+      },
+      "output": {
+        "newMessageId": {
+          "type": "string",
+          "description": "New reply message ID"
+        },
+        "threadId": {
+          "type": "string",
+          "description": "Gmail thread ID"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "sent",
+            "error"
+          ],
+          "description": "Result status"
+        }
+      },
+      "tags": [
+        "email",
+        "gmail",
+        "reply",
+        "respond"
+      ],
+      "credentialRef": "gmail_main",
+      "semanticDescription": "Sends a reply to an existing Gmail thread, preserving thread context by referencing the original message ID. Use this when continuing a conversation \u2014 it correctly sets the In-Reply-To and References headers so the reply appears in the same thread. Do NOT use this for composing a new standalone message \u2014 use Email.Send instead. Requires the message ID of the email being replied to and the reply body text.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "human",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Email.Sort": {
+      "n8nId": "E9fL6eEwZGZg6RNB",
+      "description": "Classify unread inbox emails using local Qwen3 LLM and apply NEXUS_LABELS",
+      "input": {},
+      "output": {
+        "status": {
+          "type": "string",
+          "description": "ok"
+        },
+        "sorted_count": {
+          "type": "number",
+          "description": "Number of emails sorted"
+        },
+        "sorted": {
+          "type": "array",
+          "description": "Array of {messageId, subject, label}"
+        }
+      },
+      "triggers": [
+        "schedule (every 15 min)",
+        "webhook POST /webhook/email-sort"
+      ],
+      "tags": [
+        "email",
+        "gmail",
+        "sort",
+        "classify",
+        "llm",
+        "qwen"
+      ],
+      "credentialRef": "gmail_main",
+      "llm": {
+        "model": "Qwen3-4B-noFP",
+        "endpoint": "http://192.168.1.251:8000",
+        "purpose": "classification"
+      },
+      "semanticDescription": "Scans the Gmail inbox for unread messages and classifies each one into a NEXUS_LABELS category (urgent, financial, legal, personal, kids, project, or junk) using a locally-hosted Qwen3-4B language model running on the Brainstem node. Applies the appropriate Gmail label to each message and returns a count and list of sorted messages. This workflow takes no inputs \u2014 it operates on the current inbox state. Triggered automatically on a 15-minute schedule or on-demand via webhook.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "human",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "brainstem",
+      "complexity": "low"
+    },
+    "LLM.Council": {
+      "n8nId": "13Bg7qtxJYvsFscJ",
+      "description": "Multi-model deliberation: Claude + Gemini + GPT reason together, vote, and synthesize consensus via a 2-round structured debate",
+      "input": {
+        "question": {
+          "type": "string",
+          "required": true,
+          "description": "The question or prompt for the Council to deliberate on"
+        }
+      },
+      "output": {
+        "question": {
+          "type": "string",
+          "description": "Original question passed in"
+        },
+        "final_answer": {
+          "type": "string",
+          "description": "Synthesized consensus answer from the majority"
+        },
+        "consensus": {
+          "type": "string",
+          "enum": [
+            "unanimous",
+            "majority",
+            "split"
+          ],
+          "description": "How much agreement was reached"
+        },
+        "vote_tally": {
+          "type": "object",
+          "description": "Vote counts per option, e.g. {yes: 2, no: 1}"
+        },
+        "confidence": {
+          "type": "number",
+          "description": "Domain-fit-weighted confidence of agreeing models (0\u20131)"
+        },
+        "rounds_completed": {
+          "type": "number",
+          "description": "1 if R2 was skipped (unanimous + low variance), 2 if peer review ran"
+        },
+        "questions_for_user": {
+          "type": "array",
+          "description": "Aggregated clarifying questions for the user across all models"
+        },
+        "action_items": {
+          "type": "array",
+          "description": "Merged, deduplicated action items from all models"
+        },
+        "dissent": {
+          "type": "object",
+          "description": "Outvoted model's identity and dissent note (null if unanimous)"
+        },
+        "deliberation": {
+          "type": "array",
+          "description": "Full R1 (and R2 if run) response objects from all models"
+        },
+        "meta": {
+          "type": "object",
+          "description": "{ models: string[], duration_ms: number }"
+        }
+      },
+      "tags": [
+        "llm",
+        "council",
+        "multi-model",
+        "deliberation",
+        "claude",
+        "gemini",
+        "gpt"
+      ],
+      "models": [
+        "claude-3-haiku-20240307",
+        "gemini-2.0-flash",
+        "gpt-4o-mini"
+      ],
+      "nodeCount": 28,
+      "semanticDescription": "Submits a question or prompt to a three-model deliberation council (Claude, Gemini, and GPT) that reason independently in Round 1, then conduct peer review in Round 2 if agreement is not unanimous or confidence variance is high. Returns a synthesized final answer along with the consensus level, vote tally, each model's reasoning, any dissent, and optional clarifying questions and action items. Use this for high-stakes decisions, nuanced analysis, or any question where a single model's answer may be unreliable. Significantly more expensive and slower than a single-model call \u2014 prefer a direct LLM call for routine tasks.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "human",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "council",
+      "complexity": "high"
+    },
+    "Nexus.CortexTask": {
+      "n8nId": "KfPUpjvBoWlER4jX",
+      "description": "Delegate any generation task (code, plan, design, analyze) to Cortex (4090 local LLM)",
+      "semanticDescription": "Routes a task prompt to the Cortex LLM (Qwen3-Coder-30B-A3B W4A16 running on the 4090) with a task-type-specific system prompt and returns the generated content. Supports taskType values: 'code' (outputs raw JavaScript for n8n Code nodes), 'plan' (outputs structured implementation plan), 'design' (outputs workflow JSON), 'analyze' (outputs engineering analysis), 'general' (generic assistant). Use this to delegate expensive generation work from Claude to a free local model, reducing API costs. Returns { status, result, taskType, model, tokens_used }.",
+      "input": {
+        "task": {
+          "type": "string",
+          "required": true,
+          "description": "The task or prompt to send to Cortex"
+        },
+        "taskType": {
+          "type": "string",
+          "required": true,
+          "description": "One of: code | plan | design | analyze | general"
+        },
+        "context": {
+          "type": "string",
+          "required": false,
+          "description": "Optional additional context to prepend to the task"
+        }
+      },
+      "output": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "success",
+            "error"
+          ],
+          "description": "Result status"
+        },
+        "result": {
+          "type": "string",
+          "description": "The generated content from Cortex"
+        },
+        "taskType": {
+          "type": "string",
+          "description": "The taskType that was used"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model name returned by Cortex"
+        },
+        "tokens_used": {
+          "type": "number",
+          "description": "Total tokens consumed"
+        },
+        "error": {
+          "type": "string",
+          "description": "Error message if status is error"
+        }
+      },
+      "tags": [
+        "nexus",
+        "cortex",
+        "llm",
+        "local",
+        "generation",
+        "code",
+        "plan"
+      ],
+      "llm": {
+        "model": "Qwen3-Coder-30B-A3B W4A16",
+        "endpoint": "http://192.168.1.140:8001",
+        "purpose": "task delegation"
+      },
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "internal",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Nexus.Orchestrator": {
+      "n8nId": "jnQW89CKNgFiQzgO",
+      "description": "Routes natural language requests to the correct workflow or builds a new one via Nexus.Builder",
+      "semanticDescription": "The central routing brain for Project Nexus. Accepts a natural language request, loads the active workflow registry, sends both to Cortex for intent parsing, then either executes the matched workflow (EXECUTE path) or delegates to Nexus.Builder to create a new one (BUILD path). Dangerous operations (Calendar.Delete) require autoConfirm=true to proceed. Returns { status, action, workflowName, result } or { status: 'blocked', message }. This workflow enables all future Claude sessions to call local LLMs instead of generating code themselves, dramatically reducing API costs.",
+      "input": {
+        "request": {
+          "type": "string",
+          "required": true,
+          "description": "Natural language description of what to do"
+        },
+        "autoConfirm": {
+          "type": "boolean",
+          "required": false,
+          "description": "Set true to allow dangerous operations without blocking (default false)"
+        }
+      },
+      "output": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "success",
+            "blocked"
+          ],
+          "description": "Result status"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "EXECUTE",
+            "BUILD",
+            "BLOCKED"
+          ],
+          "description": "What the orchestrator did"
+        },
+        "workflowName": {
+          "type": "string",
+          "description": "Workflow that was matched or built"
+        },
+        "result": {
+          "type": "object",
+          "description": "Output from executed sub-workflow (EXECUTE path only)"
+        },
+        "n8nId": {
+          "type": "string",
+          "description": "n8n ID of newly built workflow (BUILD path only)"
+        },
+        "message": {
+          "type": "string",
+          "description": "Block reason (BLOCKED path only)"
+        }
+      },
+      "tags": [
+        "nexus",
+        "orchestrator",
+        "routing",
+        "meta",
+        "cortex",
+        "dispatch"
+      ],
+      "llm": {
+        "model": "Qwen3-Coder-30B-A3B W4A16",
+        "endpoint": "http://192.168.1.140:8001",
+        "purpose": "intent routing"
+      },
+      "nodeCount": 14,
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [
+        "Nexus.Builder"
+      ],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Nexus.Builder": {
+      "n8nId": "xXLHd1qN95ORknln",
+      "description": "Creates and deploys new n8n workflows on demand from a spec",
+      "semanticDescription": "Generates or modifies n8n workflow JSON using the Cortex LLM (Qwen3-Coder-30B W4A16 on the 4090), validates it (JSON parse, node whitelist, credential substitution, n8n API structural check), deploys via n8n REST API, activates the workflow, and returns the registry entry for external write. Use this when no existing workflow covers the requested task and a new one must be created autonomously.",
+      "input": {
+        "description": {
+          "type": "string",
+          "required": true,
+          "description": "What the workflow should do"
+        },
+        "domain": {
+          "type": "string",
+          "required": true,
+          "description": "Domain: email, llm, http, calendar, file, memory"
+        },
+        "required_inputs": {
+          "type": "object",
+          "required": true,
+          "description": "Input schema the new workflow must accept"
+        },
+        "expected_outputs": {
+          "type": "object",
+          "required": true,
+          "description": "Output schema the new workflow must produce"
+        },
+        "similarity_match": {
+          "type": "object",
+          "required": false,
+          "description": "Existing workflow to modify (triggers MODIFY strategy)"
+        }
+      },
+      "output": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "success",
+            "error"
+          ],
+          "description": "Result status"
+        },
+        "workflowId": {
+          "type": "string",
+          "description": "n8n workflow ID of deployed workflow (null on error)"
+        },
+        "workflowName": {
+          "type": "string",
+          "description": "Name of the created workflow"
+        },
+        "deploymentStatus": {
+          "type": "string",
+          "description": "unverified after initial deploy"
+        },
+        "registryEntry": {
+          "type": "object",
+          "description": "Complete registry entry object ready to write to workflow-registry.json"
+        },
+        "registryNote": {
+          "type": "string",
+          "description": "Instructions for external registry write"
+        }
+      },
+      "tags": [
+        "nexus",
+        "builder",
+        "meta",
+        "orchestration",
+        "llm",
+        "cortex"
+      ],
+      "llm": {
+        "model": "Qwen3-Coder-30B-A3B W4A16",
+        "endpoint": "http://192.168.1.140:8001",
+        "purpose": "workflow generation"
+      },
+      "status": "active",
+      "version": 1,
+      "createdBy": "human+builder",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "internal",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Nexus.SMS.Send": {
+      "n8nId": "zONyWOnfL7Gr3Qgy",
+      "description": "Send an SMS via email-to-carrier-gateway (no external API key required)",
+      "semanticDescription": "Converts a phone number to carrier gateway email addresses and sends the message via Gmail. When carrier is unknown, broadcasts to all major US carriers (T-Mobile, Verizon, AT&T, US Cellular, Google Fi, Cricket, Boost) and only the matching carrier delivers it as SMS. Limit 160 chars. Reliable for US numbers with no Twilio account needed.",
+      "input": {
+        "to": {
+          "type": "string",
+          "required": true,
+          "description": "US phone number (digits only or formatted, e.g. 2625058898 or 262-505-8898)"
+        },
+        "message": {
+          "type": "string",
+          "required": true,
+          "description": "SMS message text (max 160 chars)"
+        },
+        "carrier": {
+          "type": "string",
+          "required": false,
+          "description": "Carrier key to target one gateway: tmobile | verizon | att | uscellular | fi | cricket | boost (omit to broadcast all)"
+        }
+      },
+      "output": {
+        "status": {
+          "type": "string",
+          "description": "sent"
+        },
+        "to": {
+          "type": "string",
+          "description": "Phone number digits"
+        },
+        "carrier": {
+          "type": "string",
+          "description": "Carrier targeted or 'broadcast'"
+        },
+        "message": {
+          "type": "string",
+          "description": "Message sent"
+        }
+      },
+      "tags": [
+        "sms",
+        "text",
+        "notify",
+        "message",
+        "communication"
+      ],
+      "credentialRef": "gmail_main",
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [
+        "Email.Send"
+      ],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Nexus.Remind": {
+      "n8nId": "RHy9sfuv4eYCcWFk",
+      "description": "Set a delayed reminder that sends an SMS at a specified time or after a delay",
+      "semanticDescription": "Accepts a message and either a delay in minutes or a target ISO datetime. Returns 200 immediately (fire-and-forget via webhook) then waits using n8n's Wait node, and sends the message as an SMS via Nexus.SMS.Send when the time arrives. Call this via HTTP POST to https://n8n.projectnexuscode.org/webhook/remind. Default phone is user's number (262-505-8898). Useful for 'remind me in 45 minutes' or 'alert me at 1:00 PM'.",
+      "input": {
+        "message": {
+          "type": "string",
+          "required": true,
+          "description": "Reminder message to send"
+        },
+        "delay_minutes": {
+          "type": "number",
+          "required": false,
+          "description": "Minutes from now to wait (mutually exclusive with target_time)"
+        },
+        "target_time": {
+          "type": "string",
+          "required": false,
+          "description": "ISO 8601 datetime to fire at (mutually exclusive with delay_minutes)"
+        },
+        "phone": {
+          "type": "string",
+          "required": false,
+          "description": "Recipient phone number (default: user's number)"
+        }
+      },
+      "output": {
+        "message": {
+          "type": "string",
+          "description": "Workflow was started"
+        }
+      },
+      "webhookUrl": "https://n8n.projectnexuscode.org/webhook/remind",
+      "webhookMethod": "POST",
+      "tags": [
+        "reminder",
+        "schedule",
+        "delay",
+        "sms",
+        "timer",
+        "wake"
+      ],
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [
+        "Nexus.SMS.Send"
+      ],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Web.Fetch": {
+      "n8nId": "Rxo8RN4rSosx0QNo",
+      "description": "Fetch a URL and return clean extracted text",
+      "semanticDescription": "Makes an HTTP GET request to any public URL, strips all HTML tags, scripts, and styles, and returns the clean readable text content along with the page title and word count. Use this to read the content of a specific web page when you already have its URL. For finding pages via search, use Web.Search or Web.SearchNews first. Returns up to maxLength characters of text (default 8000).",
+      "input": {
+        "url": {
+          "type": "string",
+          "required": true,
+          "description": "Full URL to fetch (must start with http:// or https://)"
+        },
+        "maxLength": {
+          "type": "number",
+          "required": false,
+          "description": "Max characters of text to return (default 8000)"
+        }
+      },
+      "output": {
+        "status": {
+          "type": "string",
+          "description": "success"
+        },
+        "url": {
+          "type": "string",
+          "description": "URL fetched"
+        },
+        "title": {
+          "type": "string",
+          "description": "Page title from <title> tag"
+        },
+        "text": {
+          "type": "string",
+          "description": "Extracted clean text content"
+        },
+        "wordCount": {
+          "type": "number",
+          "description": "Number of words in extracted text"
+        },
+        "fetchedAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp"
+        }
+      },
+      "tags": [
+        "web",
+        "fetch",
+        "scrape",
+        "http",
+        "html",
+        "content"
+      ],
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Web.Search": {
+      "n8nId": "nETvnAa8IhtssieI",
+      "description": "Search the web via DuckDuckGo and return result titles, snippets, and URLs",
+      "semanticDescription": "Queries DuckDuckGo's HTML search page and parses the result list into structured objects with title, snippet, and URL. Free, no API key required. Good for general web searches. For news-specific queries use Web.SearchNews; for job listings use Web.SearchJobs. Results may vary due to DDG HTML structure changes. Returns up to `limit` results (default 10).",
+      "input": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "Search query string"
+        },
+        "limit": {
+          "type": "number",
+          "required": false,
+          "description": "Max results to return (default 10)"
+        }
+      },
+      "output": {
+        "status": {
+          "type": "string",
+          "description": "success"
+        },
+        "query": {
+          "type": "string",
+          "description": "Original query"
+        },
+        "results": {
+          "type": "array",
+          "description": "Array of { title, snippet, url }"
+        },
+        "count": {
+          "type": "number",
+          "description": "Number of results returned"
+        },
+        "fetchedAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp"
+        }
+      },
+      "tags": [
+        "web",
+        "search",
+        "duckduckgo",
+        "internet",
+        "query"
+      ],
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Web.SearchNews": {
+      "n8nId": "eZtKmzDQyOEd52mY",
+      "description": "Search news articles via Google News RSS",
+      "semanticDescription": "Queries Google News RSS feed for articles matching the search query and returns structured article metadata: title, URL, source, publish date, and a short snippet. Excellent for current events, breaking news, and topic monitoring. Free, no API key required. Results are typically from the last 7 days. Returns up to `limit` articles (default 10).",
+      "input": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "News search query (e.g. 'AI breakthroughs 2026', 'Wisconsin economy')"
+        },
+        "limit": {
+          "type": "number",
+          "required": false,
+          "description": "Max articles to return (default 10)"
+        }
+      },
+      "output": {
+        "status": {
+          "type": "string",
+          "description": "success"
+        },
+        "query": {
+          "type": "string",
+          "description": "Original query"
+        },
+        "articles": {
+          "type": "array",
+          "description": "Array of { title, link, source, pubDate, snippet }"
+        },
+        "count": {
+          "type": "number",
+          "description": "Number of articles returned"
+        },
+        "fetchedAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp"
+        }
+      },
+      "tags": [
+        "web",
+        "news",
+        "search",
+        "google-news",
+        "rss",
+        "current-events"
+      ],
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Web.SearchJobs": {
+      "n8nId": "q4N1ka1pYIsQM4hA",
+      "description": "Search job listings via Indeed RSS feed",
+      "semanticDescription": "Queries Indeed's RSS job feed for listings matching the query and optional location. Returns job title, link, posting date, and a short description snippet for each result. Free, no API key required. Sorted by date (newest first). Good for finding local or remote positions. Returns up to `limit` jobs (default 15).",
+      "input": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "Job search query (e.g. 'software engineer', 'warehouse worker')"
+        },
+        "location": {
+          "type": "string",
+          "required": false,
+          "description": "Location filter (e.g. 'Milwaukee WI', 'Remote')"
+        },
+        "limit": {
+          "type": "number",
+          "required": false,
+          "description": "Max job listings to return (default 15)"
+        }
+      },
+      "output": {
+        "status": {
+          "type": "string",
+          "description": "success"
+        },
+        "query": {
+          "type": "string",
+          "description": "Original job query"
+        },
+        "location": {
+          "type": "string",
+          "description": "Location filter used"
+        },
+        "jobs": {
+          "type": "array",
+          "description": "Array of { title, link, pubDate, snippet }"
+        },
+        "count": {
+          "type": "number",
+          "description": "Number of jobs returned"
+        },
+        "fetchedAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp"
+        }
+      },
+      "tags": [
+        "web",
+        "jobs",
+        "indeed",
+        "career",
+        "employment",
+        "search"
+      ],
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-19T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Calendar.ListCalendars": {
+      "n8nId": null,
+      "description": "List all Google Calendars the authenticated user has access to",
+      "semanticDescription": "Returns the full list of Google Calendars associated with the authenticated account, including personal calendars, shared calendars, and subscribed calendars. Each entry includes the calendar ID (needed by all other Calendar.* workflows), display name, timezone, access role, and whether it is the primary calendar. Use this workflow before any other Calendar operation when you do not already know the calendarId, or when the user asks 'which calendars do I have'. Takes no required inputs.",
+      "input": {
+        "showHidden": {
+          "type": "boolean",
+          "required": false,
+          "description": "Include hidden or unsubscribed calendars (default false)"
+        }
+      },
+      "output": {
+        "calendars": {
+          "type": "array",
+          "description": "Array of { calendarId, name, description, timezone, accessRole, primary, backgroundColor }"
+        },
+        "count": {
+          "type": "number",
+          "description": "Total number of calendars returned"
+        }
+      },
+      "tags": [
+        "calendar",
+        "google-calendar",
+        "list",
+        "meta"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Calendar.List": {
+      "n8nId": null,
+      "description": "List upcoming Google Calendar events with optional date range, calendar, and text filters",
+      "semanticDescription": "Queries a Google Calendar for events within a time window and returns a list of event summaries including title, start, end, location, and attendee count. Use this to answer questions like 'what do I have coming up this week' or 'show me all meetings tomorrow'. All inputs are optional \u2014 calling with no parameters returns the next 10 events on the primary calendar over the next 7 days. For a single specific event when you already have its ID, use Calendar.Get instead. For finding open time in the calendar, use Calendar.FindFreeSlot.",
+      "input": {
+        "calendarId": {
+          "type": "string",
+          "required": false,
+          "description": "Calendar ID to query (default: 'primary')"
+        },
+        "timeMin": {
+          "type": "string",
+          "required": false,
+          "description": "ISO 8601 lower bound for event start (default: now)"
+        },
+        "timeMax": {
+          "type": "string",
+          "required": false,
+          "description": "ISO 8601 upper bound for event start (default: now + 7 days)"
+        },
+        "query": {
+          "type": "string",
+          "required": false,
+          "description": "Free-text search across title, description, location, attendee names"
+        },
+        "limit": {
+          "type": "number",
+          "required": false,
+          "description": "Max events to return (default 10, max 100)"
+        },
+        "singleEvents": {
+          "type": "boolean",
+          "required": false,
+          "description": "Expand recurring events into individual instances (default true)"
+        }
+      },
+      "output": {
+        "events": {
+          "type": "array",
+          "description": "Array of { eventId, calendarId, title, start, end, location, description, status, attendeeCount, isRecurring, htmlLink }"
+        },
+        "count": {
+          "type": "number",
+          "description": "Total events returned"
+        }
+      },
+      "tags": [
+        "calendar",
+        "google-calendar",
+        "list",
+        "events",
+        "schedule"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Calendar.Get": {
+      "n8nId": null,
+      "description": "Get a single Google Calendar event by ID",
+      "semanticDescription": "Retrieves the complete details of one specific Google Calendar event by its event ID, including all attendees, the organizer, full description, location, recurrence rule, conference (Meet) link, and timestamps. Use this when you have a known event ID and need full event details. For browsing upcoming events without a known ID, use Calendar.List or Calendar.FindFreeSlot instead.",
+      "input": {
+        "eventId": {
+          "type": "string",
+          "required": true,
+          "description": "Google Calendar event ID"
+        },
+        "calendarId": {
+          "type": "string",
+          "required": false,
+          "description": "Calendar containing the event (default: 'primary')"
+        }
+      },
+      "output": {
+        "eventId": {
+          "type": "string",
+          "description": "Event ID"
+        },
+        "calendarId": {
+          "type": "string",
+          "description": "Calendar ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Event title"
+        },
+        "start": {
+          "type": "string",
+          "description": "ISO 8601 start datetime"
+        },
+        "end": {
+          "type": "string",
+          "description": "ISO 8601 end datetime"
+        },
+        "location": {
+          "type": "string",
+          "description": "Event location (null if not set)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Event description (null if not set)"
+        },
+        "status": {
+          "type": "string",
+          "description": "'confirmed' | 'tentative' | 'cancelled'"
+        },
+        "attendees": {
+          "type": "array",
+          "description": "Array of { email, displayName, responseStatus }"
+        },
+        "organizer": {
+          "type": "object",
+          "description": "{ email, displayName }"
+        },
+        "isRecurring": {
+          "type": "boolean",
+          "description": "True if part of a recurring series"
+        },
+        "htmlLink": {
+          "type": "string",
+          "description": "URL to open event in Google Calendar web UI"
+        },
+        "conferenceData": {
+          "type": "object",
+          "description": "Meet link info (null if no video conference)"
+        }
+      },
+      "tags": [
+        "calendar",
+        "google-calendar",
+        "get",
+        "event"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Calendar.Create": {
+      "n8nId": null,
+      "description": "Create a new Google Calendar event",
+      "semanticDescription": "Creates a new event on Google Calendar with a title, start time, and end time. Supports optional description, location, attendee list, recurrence rules, Google Meet link generation, and color coding. Sending invitations to attendees is controlled by the sendUpdates field (default 'all' \u2014 attendees receive email invitations). Use this when the goal is to book a new meeting, appointment, or reminder. Do NOT use this to modify an existing event \u2014 use Calendar.Update. If you need to first check availability before creating, call Calendar.FindFreeSlot first then pass the chosen slot to this workflow.",
+      "input": {
+        "title": {
+          "type": "string",
+          "required": true,
+          "description": "Event title (summary)"
+        },
+        "start": {
+          "type": "string",
+          "required": true,
+          "description": "ISO 8601 start datetime"
+        },
+        "end": {
+          "type": "string",
+          "required": true,
+          "description": "ISO 8601 end datetime"
+        },
+        "calendarId": {
+          "type": "string",
+          "required": false,
+          "description": "Target calendar ID (default: 'primary')"
+        },
+        "description": {
+          "type": "string",
+          "required": false,
+          "description": "Event description (plain text or HTML)"
+        },
+        "location": {
+          "type": "string",
+          "required": false,
+          "description": "Event location"
+        },
+        "attendees": {
+          "type": "array",
+          "required": false,
+          "description": "Array of attendee email address strings"
+        },
+        "recurrence": {
+          "type": "array",
+          "required": false,
+          "description": "RRULE strings, e.g. ['RRULE:FREQ=WEEKLY;COUNT=4']"
+        },
+        "sendUpdates": {
+          "type": "string",
+          "required": false,
+          "description": "'all' | 'externalOnly' | 'none' (default 'all')"
+        },
+        "conferenceData": {
+          "type": "boolean",
+          "required": false,
+          "description": "If true, attach a Google Meet link"
+        }
+      },
+      "output": {
+        "eventId": {
+          "type": "string",
+          "description": "Newly created event ID"
+        },
+        "calendarId": {
+          "type": "string",
+          "description": "Calendar where event was created"
+        },
+        "title": {
+          "type": "string",
+          "description": "Event title as saved"
+        },
+        "start": {
+          "type": "string",
+          "description": "ISO 8601 start datetime"
+        },
+        "end": {
+          "type": "string",
+          "description": "ISO 8601 end datetime"
+        },
+        "htmlLink": {
+          "type": "string",
+          "description": "URL to open event in Google Calendar web UI"
+        },
+        "meetLink": {
+          "type": "string",
+          "description": "Google Meet join URL (null if conferenceData was false)"
+        },
+        "status": {
+          "type": "string",
+          "description": "'confirmed'"
+        }
+      },
+      "tags": [
+        "calendar",
+        "google-calendar",
+        "create",
+        "event",
+        "schedule",
+        "book"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Calendar.Update": {
+      "n8nId": null,
+      "description": "Modify fields on an existing Google Calendar event",
+      "semanticDescription": "Updates one or more fields on an existing Google Calendar event identified by its event ID. Only the fields provided in the input are changed \u2014 all other fields are preserved (patch semantics). WARNING: the attendees field replaces the entire attendee list, not merges with it \u2014 if adding one attendee, first call Calendar.Get to retrieve the current list, then pass the full updated list to this workflow. Use Calendar.Delete to remove an event entirely.",
+      "input": {
+        "eventId": {
+          "type": "string",
+          "required": true,
+          "description": "Event ID to update"
+        },
+        "calendarId": {
+          "type": "string",
+          "required": false,
+          "description": "Calendar containing the event (default: 'primary')"
+        },
+        "title": {
+          "type": "string",
+          "required": false,
+          "description": "New event title"
+        },
+        "start": {
+          "type": "string",
+          "required": false,
+          "description": "New ISO 8601 start datetime"
+        },
+        "end": {
+          "type": "string",
+          "required": false,
+          "description": "New ISO 8601 end datetime"
+        },
+        "description": {
+          "type": "string",
+          "required": false,
+          "description": "New description"
+        },
+        "location": {
+          "type": "string",
+          "required": false,
+          "description": "New location"
+        },
+        "attendees": {
+          "type": "array",
+          "required": false,
+          "description": "New complete attendee email list (replaces existing list)"
+        },
+        "sendUpdates": {
+          "type": "string",
+          "required": false,
+          "description": "'all' | 'externalOnly' | 'none' (default 'all')"
+        }
+      },
+      "output": {
+        "eventId": {
+          "type": "string",
+          "description": "Event ID"
+        },
+        "calendarId": {
+          "type": "string",
+          "description": "Calendar ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Updated title"
+        },
+        "start": {
+          "type": "string",
+          "description": "Updated start datetime"
+        },
+        "end": {
+          "type": "string",
+          "description": "Updated end datetime"
+        },
+        "htmlLink": {
+          "type": "string",
+          "description": "URL to open event in Google Calendar web UI"
+        },
+        "updated": {
+          "type": "string",
+          "description": "ISO 8601 timestamp of this update"
+        }
+      },
+      "tags": [
+        "calendar",
+        "google-calendar",
+        "update",
+        "event",
+        "modify"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Calendar.Delete": {
+      "n8nId": null,
+      "description": "Permanently delete a Google Calendar event",
+      "semanticDescription": "Permanently and irreversibly deletes a Google Calendar event by its event ID. By default, cancellation notification emails are sent to all attendees. This action cannot be undone \u2014 deleted events cannot be recovered through n8n. Use Calendar.Update with status 'cancelled' instead if you want to cancel the event while keeping it visible in the calendar history. This is a DANGEROUS action \u2014 explicit confirmation is required before execution.",
+      "input": {
+        "eventId": {
+          "type": "string",
+          "required": true,
+          "description": "Event ID to delete"
+        },
+        "calendarId": {
+          "type": "string",
+          "required": false,
+          "description": "Calendar containing the event (default: 'primary')"
+        },
+        "sendUpdates": {
+          "type": "string",
+          "required": false,
+          "description": "Cancellation notification mode: 'all' (default), 'externalOnly', 'none'"
+        }
+      },
+      "output": {
+        "eventId": {
+          "type": "string",
+          "description": "The event ID that was deleted"
+        },
+        "status": {
+          "type": "string",
+          "description": "'deleted'"
+        }
+      },
+      "tags": [
+        "calendar",
+        "google-calendar",
+        "delete",
+        "event",
+        "dangerous"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": true,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Drive.ListFiles": {
+      "n8nId": null,
+      "description": "List files and folders in Google Drive with optional search query",
+      "semanticDescription": "Searches Google Drive for files matching a query string (supports Drive search syntax: name contains 'report', mimeType='application/pdf', modifiedTime > '2026-01-01'). Returns file name, ID, MIME type, size, created/modified dates, and web view link. Use the file ID in Drive.GetFile to download content. Returns up to limit results (default 20).",
+      "input": {
+        "query": {
+          "type": "string",
+          "required": false,
+          "description": "Drive search query (e.g. \"name contains 'budget'\" or \"mimeType='application/pdf'\")"
+        },
+        "limit": {
+          "type": "number",
+          "required": false,
+          "description": "Max files to return (default 20)"
+        },
+        "folderId": {
+          "type": "string",
+          "required": false,
+          "description": "Restrict search to files inside this folder ID (default: all Drive)"
+        }
+      },
+      "output": {
+        "files": {
+          "type": "array",
+          "description": "Array of { fileId, name, mimeType, size, createdTime, modifiedTime, webViewLink, parents }"
+        },
+        "count": {
+          "type": "number",
+          "description": "Number of files returned"
+        }
+      },
+      "tags": [
+        "drive",
+        "google-drive",
+        "list",
+        "search",
+        "files"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Drive.GetFile": {
+      "n8nId": null,
+      "description": "Download a Google Drive file's content as text",
+      "semanticDescription": "Exports or downloads a Google Drive file and returns its text content. For Google Docs/Sheets/Slides, exports as plain text or CSV. For PDFs and other binary files, returns the raw content encoded as base64. Use Drive.ListFiles to get the fileId first. Best for reading text documents, CSVs, and exported Google Workspace files.",
+      "input": {
+        "fileId": {
+          "type": "string",
+          "required": true,
+          "description": "Google Drive file ID"
+        },
+        "mimeType": {
+          "type": "string",
+          "required": false,
+          "description": "Export MIME type for Google Workspace files (default: text/plain for Docs, text/csv for Sheets)"
+        }
+      },
+      "output": {
+        "fileId": {
+          "type": "string",
+          "description": "File ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "File name"
+        },
+        "content": {
+          "type": "string",
+          "description": "File content as text (or base64 for binary)"
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "MIME type of the returned content"
+        },
+        "sizeBytes": {
+          "type": "number",
+          "description": "Content size in bytes"
+        }
+      },
+      "tags": [
+        "drive",
+        "google-drive",
+        "download",
+        "read",
+        "file"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Drive.CreateFolder": {
+      "n8nId": null,
+      "description": "Create a new folder in Google Drive",
+      "semanticDescription": "Creates a new folder in Google Drive, optionally nested inside an existing parent folder. Returns the new folder's ID (use this in Drive.UploadFile's folderId). If a folder with the same name exists, creates a second one \u2014 Drive allows duplicate folder names. Use Drive.ListFiles with a name query to check first if needed.",
+      "input": {
+        "name": {
+          "type": "string",
+          "required": true,
+          "description": "Folder name to create"
+        },
+        "parentId": {
+          "type": "string",
+          "required": false,
+          "description": "Parent folder ID (default: My Drive root)"
+        }
+      },
+      "output": {
+        "folderId": {
+          "type": "string",
+          "description": "New folder ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Folder name"
+        },
+        "webViewLink": {
+          "type": "string",
+          "description": "URL to open folder in Drive"
+        }
+      },
+      "tags": [
+        "drive",
+        "google-drive",
+        "folder",
+        "create",
+        "organize"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Sheets.Read": {
+      "n8nId": null,
+      "description": "Read rows from a Google Sheets spreadsheet",
+      "semanticDescription": "Reads rows from a specified sheet (tab) in a Google Sheets spreadsheet and returns them as an array of objects where keys are the header row values. Supports reading a specific range or all data. Use the spreadsheetId from the Sheets URL. Returns up to limit rows (default 100). Ideal for reading configuration data, logs, or any tabular data stored in Sheets.",
+      "input": {
+        "spreadsheetId": {
+          "type": "string",
+          "required": true,
+          "description": "Google Sheets spreadsheet ID (from URL)"
+        },
+        "sheetName": {
+          "type": "string",
+          "required": false,
+          "description": "Sheet tab name (default: first sheet)"
+        },
+        "range": {
+          "type": "string",
+          "required": false,
+          "description": "A1 notation range (default: all data, e.g. 'A1:Z100')"
+        },
+        "limit": {
+          "type": "number",
+          "required": false,
+          "description": "Max rows to return (default 100)"
+        }
+      },
+      "output": {
+        "rows": {
+          "type": "array",
+          "description": "Array of row objects with header keys"
+        },
+        "count": {
+          "type": "number",
+          "description": "Number of rows returned"
+        },
+        "headers": {
+          "type": "array",
+          "description": "Column header names from row 1"
+        }
+      },
+      "tags": [
+        "sheets",
+        "google-sheets",
+        "read",
+        "spreadsheet",
+        "data"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Sheets.AppendRow": {
+      "n8nId": null,
+      "description": "Append one or more rows to a Google Sheets spreadsheet",
+      "semanticDescription": "Appends data rows to the end of a Google Sheets spreadsheet sheet. Accepts an array of row objects (keys must match the header row) or a 2D array of raw values. Data is inserted after the last row with content \u2014 never overwrites existing data. Use this for logging, tracking, or accumulating records over time.",
+      "input": {
+        "spreadsheetId": {
+          "type": "string",
+          "required": true,
+          "description": "Google Sheets spreadsheet ID"
+        },
+        "sheetName": {
+          "type": "string",
+          "required": false,
+          "description": "Sheet tab name (default: first sheet)"
+        },
+        "rows": {
+          "type": "array",
+          "required": true,
+          "description": "Array of row objects to append (e.g. [{name: 'Alice', score: 95}])"
+        }
+      },
+      "output": {
+        "updatedRange": {
+          "type": "string",
+          "description": "A1 notation of the range that was updated"
+        },
+        "updatedRows": {
+          "type": "number",
+          "description": "Number of rows appended"
+        }
+      },
+      "tags": [
+        "sheets",
+        "google-sheets",
+        "write",
+        "append",
+        "log"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Sheets.UpdateCell": {
+      "n8nId": null,
+      "description": "Write a value to a specific cell in a Google Sheets spreadsheet",
+      "semanticDescription": "Updates a single cell or small range in a Google Sheets spreadsheet using A1 notation. Use this for updating status fields, timestamps, counters, or any targeted cell update. For appending new records, use Sheets.AppendRow instead. For reading, use Sheets.Read.",
+      "input": {
+        "spreadsheetId": {
+          "type": "string",
+          "required": true,
+          "description": "Google Sheets spreadsheet ID"
+        },
+        "sheetName": {
+          "type": "string",
+          "required": false,
+          "description": "Sheet tab name (default: first sheet)"
+        },
+        "range": {
+          "type": "string",
+          "required": true,
+          "description": "A1 notation of cell to update (e.g. 'B5' or 'A1:C1')"
+        },
+        "value": {
+          "type": "string",
+          "required": true,
+          "description": "Value to write (string, number, or formula starting with =)"
+        }
+      },
+      "output": {
+        "updatedRange": {
+          "type": "string",
+          "description": "A1 notation of updated range"
+        },
+        "updatedCells": {
+          "type": "number",
+          "description": "Number of cells updated"
+        }
+      },
+      "tags": [
+        "sheets",
+        "google-sheets",
+        "write",
+        "update",
+        "cell"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "Docs.Create": {
+      "n8nId": null,
+      "description": "Create a new Google Doc with optional initial content",
+      "semanticDescription": "Creates a new Google Document with a given title and optional initial body text. Returns the document ID and URL. The document is created in the authenticated user's Drive root by default. Use this to programmatically generate reports, notes, drafts, or any text document. For adding content to an existing document, use Docs.AppendText.",
+      "input": {
+        "title": {
+          "type": "string",
+          "required": true,
+          "description": "Document title"
+        },
+        "content": {
+          "type": "string",
+          "required": false,
+          "description": "Initial body text content (plain text)"
+        },
+        "folderId": {
+          "type": "string",
+          "required": false,
+          "description": "Drive folder ID to create the document in (default: Drive root)"
+        }
+      },
+      "output": {
+        "documentId": {
+          "type": "string",
+          "description": "Google Docs document ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Document title"
+        },
+        "url": {
+          "type": "string",
+          "description": "URL to open the document in Google Docs"
+        }
+      },
+      "tags": [
+        "docs",
+        "google-docs",
+        "create",
+        "document",
+        "write"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Docs.Read": {
+      "n8nId": null,
+      "description": "Read the text content of a Google Doc",
+      "semanticDescription": "Exports a Google Docs document as plain text and returns its content. Use the documentId from the URL (the long string after /d/ and before /edit). Returns the full document text with paragraph breaks preserved. For structured data, consider Sheets.Read instead. This is ideal for reading meeting notes, reports, or any long-form text stored in Docs.",
+      "input": {
+        "documentId": {
+          "type": "string",
+          "required": true,
+          "description": "Google Docs document ID"
+        }
+      },
+      "output": {
+        "documentId": {
+          "type": "string",
+          "description": "Document ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Document title"
+        },
+        "content": {
+          "type": "string",
+          "description": "Full document text content"
+        },
+        "wordCount": {
+          "type": "number",
+          "description": "Approximate word count"
+        }
+      },
+      "tags": [
+        "docs",
+        "google-docs",
+        "read",
+        "document",
+        "text"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "none",
+      "complexity": "trivial"
+    },
+    "LLM.Summarize": {
+      "n8nId": null,
+      "description": "Summarize a long text using Brainstem (local 7B model, free)",
+      "semanticDescription": "Sends a text passage to the Brainstem LLM (Qwen3-4B running on the 4070 at 192.168.1.251:8000) for summarization. Returns a concise summary in the requested format. Use this for summarizing emails, documents, news articles, or any long-form text. Completely free \u2014 uses local GPU, no API cost. For complex reasoning or code tasks, use Nexus.CortexTask (30B model on 4090) instead.",
+      "input": {
+        "text": {
+          "type": "string",
+          "required": true,
+          "description": "Text to summarize"
+        },
+        "format": {
+          "type": "string",
+          "required": false,
+          "description": "Output format: 'paragraph' (default), 'bullets', 'one-sentence'"
+        },
+        "focus": {
+          "type": "string",
+          "required": false,
+          "description": "Optional focus instruction (e.g. 'focus on action items', 'focus on financial details')"
+        }
+      },
+      "output": {
+        "summary": {
+          "type": "string",
+          "description": "Summarized text"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model used (brainstem)"
+        },
+        "tokens_used": {
+          "type": "number",
+          "description": "Total tokens consumed"
+        }
+      },
+      "tags": [
+        "llm",
+        "summarize",
+        "brainstem",
+        "local",
+        "free",
+        "text"
+      ],
+      "llm": {
+        "model": "Qwen3-4B-noFP",
+        "endpoint": "http://192.168.1.251:8000",
+        "purpose": "summarization"
+      },
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "brainstem",
+      "complexity": "low"
+    },
+    "LLM.Extract": {
+      "n8nId": null,
+      "description": "Extract structured data from unstructured text using Brainstem (local 7B model, free)",
+      "semanticDescription": "Sends text to Brainstem (Qwen3-4B on the 4070) and asks it to extract specific fields as JSON. Provide a schema describing what to extract (field name, type, description). Returns a structured JSON object. Use this to parse emails for dates/amounts/names, extract job requirements from postings, pull key facts from articles, or any NLP extraction task. Free \u2014 uses local GPU.",
+      "input": {
+        "text": {
+          "type": "string",
+          "required": true,
+          "description": "Text to extract from"
+        },
+        "schema": {
+          "type": "object",
+          "required": true,
+          "description": "Fields to extract: {fieldName: {type, description}} \u2014 e.g. {amount: {type:'number', description:'dollar amount'}, date: {type:'string', description:'date mentioned'}}"
+        }
+      },
+      "output": {
+        "extracted": {
+          "type": "object",
+          "description": "Extracted fields as JSON object matching the schema"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model used"
+        },
+        "tokens_used": {
+          "type": "number",
+          "description": "Total tokens consumed"
+        }
+      },
+      "tags": [
+        "llm",
+        "extract",
+        "parse",
+        "brainstem",
+        "local",
+        "free",
+        "nlp"
+      ],
+      "llm": {
+        "model": "Qwen3-4B-noFP",
+        "endpoint": "http://192.168.1.251:8000",
+        "purpose": "extraction"
+      },
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "brainstem",
+      "complexity": "low"
+    },
+    "Web.Summarize": {
+      "n8nId": null,
+      "description": "Fetch a URL and summarize its content using Brainstem (free)",
+      "semanticDescription": "Combines Web.Fetch and LLM.Summarize: fetches a URL, strips HTML to clean text, then sends to Brainstem (Qwen3-4B on 4070) for summarization. Returns a concise summary of the page content. Ideal for reading and condensing news articles, blog posts, documentation pages, or any web content into a short actionable summary. Completely free \u2014 no API costs.",
+      "input": {
+        "url": {
+          "type": "string",
+          "required": true,
+          "description": "URL to fetch and summarize"
+        },
+        "format": {
+          "type": "string",
+          "required": false,
+          "description": "Summary format: 'paragraph' (default), 'bullets', 'one-sentence'"
+        },
+        "focus": {
+          "type": "string",
+          "required": false,
+          "description": "Optional focus instruction for the summary"
+        }
+      },
+      "output": {
+        "url": {
+          "type": "string",
+          "description": "URL that was fetched"
+        },
+        "title": {
+          "type": "string",
+          "description": "Page title"
+        },
+        "summary": {
+          "type": "string",
+          "description": "Summarized content"
+        },
+        "model": {
+          "type": "string",
+          "description": "LLM model used for summarization"
+        }
+      },
+      "tags": [
+        "web",
+        "summarize",
+        "fetch",
+        "brainstem",
+        "local",
+        "free",
+        "research"
+      ],
+      "llm": {
+        "model": "Qwen3-4B-noFP",
+        "endpoint": "http://192.168.1.251:8000",
+        "purpose": "summarization"
+      },
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [
+        "Web.Fetch"
+      ],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Calendar.FindFreeSlot": {
+      "n8nId": null,
+      "description": "Find available time slots of a specified duration within a search window",
+      "semanticDescription": "Queries the Google Calendar free/busy API for a given time window, then computes available time slots of the requested duration that fall within configurable working hours. Returns up to maxSlots candidate slots (default 5) aligned to 15-minute boundaries. Use this before Calendar.Create when you need to find a suitable meeting time \u2014 pass one of the returned slot start/end values directly to Calendar.Create. Does NOT book anything \u2014 it only reads availability. For simply listing existing events, use Calendar.List instead.",
+      "input": {
+        "durationMinutes": {
+          "type": "number",
+          "required": true,
+          "description": "Required slot length in minutes (e.g. 30, 60, 90)"
+        },
+        "searchStart": {
+          "type": "string",
+          "required": false,
+          "description": "ISO 8601 start of search window (default: now)"
+        },
+        "searchEnd": {
+          "type": "string",
+          "required": false,
+          "description": "ISO 8601 end of search window (default: now + 7 days)"
+        },
+        "calendarId": {
+          "type": "string",
+          "required": false,
+          "description": "Calendar to check (default: 'primary')"
+        },
+        "workdayStartHour": {
+          "type": "number",
+          "required": false,
+          "description": "Working day start hour in local time (default 9)"
+        },
+        "workdayEndHour": {
+          "type": "number",
+          "required": false,
+          "description": "Working day end hour in local time (default 17)"
+        },
+        "timezone": {
+          "type": "string",
+          "required": false,
+          "description": "IANA timezone for workday bounds (default 'US/Central')"
+        },
+        "maxSlots": {
+          "type": "number",
+          "required": false,
+          "description": "Max free slots to return (default 5)"
+        }
+      },
+      "output": {
+        "slots": {
+          "type": "array",
+          "description": "Array of { start, end, durationMinutes } representing available time slots"
+        },
+        "count": {
+          "type": "number",
+          "description": "Number of free slots found"
+        },
+        "searched": {
+          "type": "object",
+          "description": "{ from: ISO, to: ISO } \u2014 the window that was searched"
+        }
+      },
+      "tags": [
+        "calendar",
+        "google-calendar",
+        "availability",
+        "scheduling",
+        "free-slot",
+        "find"
+      ],
+      "credentialRef": "gmail_main",
+      "dangerous": false,
+      "status": "inactive",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": null,
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Portfolio.WriteREADME": {
+      "n8nId": "1CU0SxOOBFUObsJa",
+      "description": "Generate and commit a professional README.md for a GitHub repo using Cortex",
+      "semanticDescription": "Fetches the file structure and key source files from a GitHub repository, sends them to Cortex (Qwen3-Coder-30B) with a prompt to write a professional README.md suitable for a software engineering portfolio, then commits the resulting README to the repo via the GitHub Contents API. Uses GITHUB_PAT env var for authentication and GITHUB_OWNER env var for the account name.",
+      "input": {
+        "repo": {
+          "type": "string",
+          "required": true,
+          "description": "GitHub repository name (e.g. 'Draughts')"
+        },
+        "branch": {
+          "type": "string",
+          "required": false,
+          "description": "Branch name (default: main or master)"
+        }
+      },
+      "output": {
+        "success": {
+          "type": "boolean",
+          "description": "Whether README was committed successfully"
+        },
+        "commitSha": {
+          "type": "string",
+          "description": "SHA of the resulting commit"
+        },
+        "commitUrl": {
+          "type": "string",
+          "description": "GitHub URL of the commit"
+        },
+        "readmePreview": {
+          "type": "string",
+          "description": "First 500 chars of the generated README"
+        }
+      },
+      "tags": [
+        "portfolio",
+        "github",
+        "readme",
+        "documentation",
+        "cortex"
+      ],
+      "credentialRef": null,
+      "dangerous": false,
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-20T19:47:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "builderHints": {
+        "llmEndpoint": "CORTEX_LLM_URL",
+        "model": "qwen3-coder",
+        "useGitHubApi": true,
+        "githubPatEnvVar": "GITHUB_PAT",
+        "githubOwnerEnvVar": "GITHUB_OWNER",
+        "fileFilters": [
+          "*.md",
+          "*.js",
+          "*.ts",
+          "*.py",
+          "*.cs",
+          "*.java",
+          "*.html",
+          "*.css",
+          "*.json",
+          "*.txt",
+          "*.yaml",
+          "*.yml"
+        ],
+        "maxFileSizeBytes": 20000,
+        "maxTotalChars": 40000,
+        "systemPrompt": "You are a senior software engineer writing portfolio documentation. Write a professional, specific, and impressive README.md based on the actual code you see \u2014 not generic placeholders. Include: project title, one-line description, features (concrete and specific), tech stack, getting started / build instructions, and author credit (Andrew Mattick, github.com/Ginkobaloba). Output ONLY the README.md markdown content.",
+        "outputFormat": "raw_markdown"
+      },
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Portfolio.ImproveFile": {
+      "n8nId": "uWBP1b8jYLNXJpQB",
+      "description": "Improve a single source file in a GitHub repo using Cortex and commit the result",
+      "semanticDescription": "Fetches a specific file from a GitHub repository, sends it to Cortex (Qwen3-Coder-30B) with improvement instructions, then commits the rewritten file back to the repo via GitHub Contents API. Handles both creating new files and updating existing ones (fetches current SHA before committing). Improvements include: fixing bugs, modernizing syntax, improving code organization, adding comments, and following best practices for the detected language.",
+      "input": {
+        "repo": {
+          "type": "string",
+          "required": true,
+          "description": "GitHub repository name"
+        },
+        "path": {
+          "type": "string",
+          "required": true,
+          "description": "File path within the repo (e.g. 'src/App.js')"
+        },
+        "task": {
+          "type": "string",
+          "required": false,
+          "description": "Specific improvement instructions (e.g. 'fix bugs, modernize to ES6, add JSDoc')"
+        },
+        "branch": {
+          "type": "string",
+          "required": false,
+          "description": "Branch name (default: main or master)"
+        }
+      },
+      "output": {
+        "success": {
+          "type": "boolean",
+          "description": "Whether the file was committed successfully"
+        },
+        "commitSha": {
+          "type": "string",
+          "description": "SHA of the resulting commit"
+        },
+        "commitUrl": {
+          "type": "string",
+          "description": "GitHub URL of the commit"
+        },
+        "path": {
+          "type": "string",
+          "description": "Path of the file that was improved"
+        }
+      },
+      "tags": [
+        "portfolio",
+        "github",
+        "refactor",
+        "improve",
+        "cortex",
+        "code"
+      ],
+      "credentialRef": null,
+      "dangerous": false,
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-20T19:47:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "builderHints": {
+        "llmEndpoint": "CORTEX_LLM_URL",
+        "model": "qwen3-coder",
+        "useGitHubApi": true,
+        "githubPatEnvVar": "GITHUB_PAT",
+        "githubOwnerEnvVar": "GITHUB_OWNER",
+        "systemPrompt": "You are a senior developer improving code for a technical portfolio. Fix bugs, use modern idioms, improve readability, and add helpful comments. Output ONLY the improved file content with no explanation, preamble, or markdown code fences.",
+        "outputFormat": "raw_code",
+        "commitMessageTemplate": "Portfolio improvement: {path} \u2014 refactor and modernize"
+      },
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Portfolio.ProcessRepo": {
+      "n8nId": "GNouMiLPmyiqx79U",
+      "description": "Fully improve a GitHub repository for portfolio use: write README, fix bugs, modernize code",
+      "semanticDescription": "Orchestrates a complete portfolio improvement pass over a single GitHub repository. Fetches the repo file list, writes a professional README via Cortex, then improves up to maxFiles source files (excluding binaries, build output, and dependencies). All GitHub API calls and Cortex LLM calls are made directly within the workflow. Returns a summary of all commits made. Callable as a sub-workflow via Execute Workflow node.",
+      "input": {
+        "repo": {
+          "type": "string",
+          "required": true,
+          "description": "GitHub repository name"
+        },
+        "branch": {
+          "type": "string",
+          "required": false,
+          "description": "Branch name (default: auto-detect)"
+        },
+        "maxFiles": {
+          "type": "number",
+          "required": false,
+          "description": "Maximum source files to improve (default: 5)"
+        }
+      },
+      "output": {
+        "repo": {
+          "type": "string",
+          "description": "Repository name"
+        },
+        "readmeCommit": {
+          "type": "string",
+          "description": "Commit SHA of the README"
+        },
+        "filesImproved": {
+          "type": "number",
+          "description": "Count of source files improved"
+        },
+        "commits": {
+          "type": "array",
+          "description": "Array of { path, commitSha } for each improved file"
+        },
+        "errors": {
+          "type": "array",
+          "description": "Any files that failed with error messages"
+        }
+      },
+      "tags": [
+        "portfolio",
+        "github",
+        "orchestrate",
+        "improve",
+        "cortex"
+      ],
+      "credentialRef": null,
+      "dangerous": false,
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-20T19:48:00Z",
+      "dependsOn": [],
+      "allowedCallers": "any",
+      "builderHints": {
+        "skipPatterns": [
+          "node_modules",
+          ".vs",
+          "bin/",
+          "obj/",
+          "dist/",
+          "build/",
+          ".git",
+          "packages/",
+          "kivy_venv/",
+          "*.min.js",
+          "*.map",
+          "*.lock",
+          "package-lock.json"
+        ],
+        "priorityExtensions": [
+          ".js",
+          ".ts",
+          ".py",
+          ".cs",
+          ".java",
+          ".html",
+          ".css"
+        ],
+        "maxFileSizeBytes": 50000
+      },
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Nexus.Agent": {
+      "n8nId": "MtcY4PBIgCok1nZW",
+      "description": "Conversational AI agent powered by Cortex (Qwen3-Coder-30B) \u2014 chat interface to the entire Nexus automation system",
+      "semanticDescription": "The primary user-facing chat interface for Project Nexus. Accepts a natural language message via POST /webhook/nexus-agent, routes it through Cortex (Qwen3-Coder-30B-A3B on the 4090) for intent classification, then either executes the matching sub-workflow (Email.*, Web.*, LLM.*, Nexus.*) or returns a direct conversational response. No Claude API tokens are consumed \u2014 all reasoning is handled by the local GPU. Returns { reply, action_taken, result }. Supports sessionId for future conversation memory.",
+      "input": {
+        "message": {
+          "type": "string",
+          "required": true,
+          "description": "Natural language request or question"
+        },
+        "sessionId": {
+          "type": "string",
+          "required": false,
+          "description": "Optional session identifier for future conversation context"
+        }
+      },
+      "output": {
+        "reply": {
+          "type": "string",
+          "description": "Agent's natural language response"
+        },
+        "action_taken": {
+          "type": "string",
+          "description": "Workflow name executed, or 'respond' for conversational replies"
+        },
+        "result": {
+          "type": "object",
+          "description": "Sub-workflow output if a workflow was executed, otherwise empty object"
+        }
+      },
+      "webhookUrl": "https://n8n.projectnexuscode.org/webhook/nexus-agent",
+      "webhookMethod": "POST",
+      "tags": [
+        "nexus",
+        "agent",
+        "chat",
+        "cortex",
+        "conversational",
+        "entry-point"
+      ],
+      "llm": {
+        "model": "qwen3-coder",
+        "endpoint": "http://host.docker.internal:8001",
+        "purpose": "intent classification and response"
+      },
+      "nodeCount": 10,
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-20T00:00:00Z",
+      "dependsOn": [
+        "Email.Send",
+        "Email.Get",
+        "Email.List",
+        "Email.Search",
+        "Email.Label",
+        "Email.Reply",
+        "Email.Sort",
+        "LLM.Council",
+        "Web.SearchNews",
+        "Web.Search",
+        "Web.Fetch",
+        "Nexus.SMS.Send",
+        "Nexus.Remind",
+        "Nexus.Orchestrator"
+      ],
+      "allowedCallers": "any",
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+    "Portfolio.ProcessAll": {
+      "n8nId": "1ExRMCbSI4K8lyEC",
+      "description": "Webhook-triggered workflow that runs Portfolio.ProcessRepo on all configured GitHub repos in sequence",
+      "semanticDescription": "Webhook-triggered (POST /webhook/portfolio-improve-all) entry point for the complete portfolio improvement pipeline. Iterates through a hardcoded list of all target repositories in order from oldest to newest: Draughts, LifeLink, ginkobaloba.github.io, Advent2019, KeywordParser, tic_tac_toe_touchstone_mattick, Checkers_Touchstone_Mattick, ABC_Fitness, ProjectNexus. For each repo, calls Portfolio.ProcessRepo sequentially with a 10-second pause between repos to avoid rate limiting. Returns a full summary of all changes made across all repos.",
+      "input": {
+        "repos": {
+          "type": "array",
+          "required": false,
+          "description": "Override repo list (default: all 9 portfolio repos)"
+        },
+        "maxFiles": {
+          "type": "number",
+          "required": false,
+          "description": "Max files to improve per repo (default: 5)"
+        }
+      },
+      "output": {
+        "totalRepos": {
+          "type": "number",
+          "description": "Number of repos processed"
+        },
+        "totalCommits": {
+          "type": "number",
+          "description": "Total commits made across all repos"
+        },
+        "results": {
+          "type": "array",
+          "description": "Per-repo results from Portfolio.ProcessRepo"
+        },
+        "errors": {
+          "type": "array",
+          "description": "Any repos that failed"
+        },
+        "duration": {
+          "type": "string",
+          "description": "Total wall-clock time"
+        }
+      },
+      "tags": [
+        "portfolio",
+        "github",
+        "batch",
+        "cortex",
+        "automation"
+      ],
+      "credentialRef": null,
+      "dangerous": false,
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-20T19:48:00Z",
+      "dependsOn": [
+        "Portfolio.ProcessRepo"
+      ],
+      "allowedCallers": "any",
+      "builderHints": {
+        "triggerType": "webhook",
+        "webhookPath": "portfolio-improve-all",
+        "responseMode": "onReceived",
+        "defaultRepos": [
+          "Draughts",
+          "LifeLink",
+          "ginkobaloba.github.io",
+          "Advent2019",
+          "KeywordParser",
+          "tic_tac_toe_touchstone_mattick",
+          "Checkers_Touchstone_Mattick",
+          "ABC_Fitness",
+          "ProjectNexus"
+        ],
+        "pauseBetweenRepos": 10000
+      },
+      "executor": "cortex",
+      "complexity": "medium"
+    },
+
+    "Brainstem.InboxTriage": {
+      "n8nId": "FERJR5UvNvN8d59w",
+      "description": "Every 10 minutes, fetch the last 20 unread emails and classify each via Brainstem (Qwen3-4B). Applies Gmail labels based on classification.",
+      "input": {},
+      "output": {
+        "labeled":   { "type": "number", "description": "Number of emails labeled in this run" },
+        "timestamp": { "type": "string", "description": "ISO 8601 timestamp of run completion" }
+      },
+      "triggers": ["schedule (every 10 min)"],
+      "tags": ["email", "gmail", "classify", "llm", "brainstem", "qwen", "scheduled"],
+      "credentialRef": "gmail_main",
+      "llm": { "model": "Qwen3-4B-noFP", "endpoint": "http://192.168.1.251:8000", "purpose": "email classification" },
+      "semanticDescription": "Scheduled autonomous inbox triage. Runs every 10 minutes, fetches up to 20 unread emails that have not already been labeled, sends each to the Brainstem 4B LLM for classification into one of URGENT / FINANCES / LEGAL / PERSONAL / KIDS / PROJECT_NEXUS / JUNK, then applies the corresponding Gmail label via the Gmail modify API. Keeps the 4070 GPU under continuous load with zero external API cost.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-20T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "none"
+    },
+
+    "Cortex.DailySynthesis": {
+      "n8nId": "XH8tPQdrs3puHDSr",
+      "description": "Every morning at 6am US/Central, reads the last 24 hours of email, sends to Cortex (Qwen3-Coder-30B), and emails a structured daily briefing to self.",
+      "input": {},
+      "output": {
+        "briefing":    { "type": "string", "description": "Daily briefing text sent via email" },
+        "emailCount":  { "type": "number", "description": "Number of emails summarized" },
+        "generatedAt": { "type": "string", "description": "ISO 8601 timestamp when briefing was generated" }
+      },
+      "triggers": ["schedule (daily 06:00 US/Central)"],
+      "tags": ["email", "llm", "cortex", "briefing", "daily", "scheduled", "synthesis"],
+      "credentialRef": "gmail_main",
+      "llm": { "model": "Qwen3-Coder-30B-A3B", "endpoint": "http://host.docker.internal:8001", "purpose": "daily briefing synthesis" },
+      "semanticDescription": "Scheduled daily synthesis workflow. At 6:00 AM US/Central, fetches up to 50 emails from the last 24 hours, builds a structured prompt, delegates synthesis to Cortex (Qwen3-Coder-30B on the 4090), and sends the resulting daily briefing to the owner email address. Provides URGENT ACTIONS, KEY UPDATES by category, PROJECT NEXUS updates, and items requiring response. Zero external API cost.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-20T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "none"
+    },
+
+    "Cortex.BuildHealthCheck": {
+      "n8nId": "PA4ne3tpVf6rXuS3",
+      "description": "Every 6 hours, fetches all active n8n workflows and asks Cortex for a system health assessment and optimization recommendations.",
+      "input": {},
+      "output": {
+        "analysis":      { "type": "string", "description": "Cortex health assessment text" },
+        "workflowCount": { "type": "number", "description": "Number of active workflows analyzed" },
+        "checkedAt":     { "type": "string", "description": "ISO 8601 timestamp of health check" }
+      },
+      "triggers": ["schedule (every 6 hours)"],
+      "tags": ["nexus", "health", "audit", "cortex", "scheduled", "maintenance"],
+      "llm": { "model": "Qwen3-Coder-30B-A3B", "endpoint": "http://host.docker.internal:8001", "purpose": "system health audit" },
+      "semanticDescription": "Scheduled system health audit. Every 6 hours, queries the n8n REST API for all active workflows, compiles a node count and name list, sends it to Cortex for an engineering health assessment covering: overall system health, concerns (node bloat, bottlenecks), optimization recommendations, and under-utilized workflows. Results are logged as Set node output in n8n execution history. Zero external API cost.",
+      "status": "active",
+      "version": 1,
+      "createdBy": "claude-code",
+      "nodeHash": null,
+      "usageCount": 0,
+      "lastVerified": "2026-02-20T00:00:00Z",
+      "dependsOn": [],
+      "allowedCallers": "none"
+    }
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "name": "Gmail Loop Test",
+  "nodes": [
+    {
+      "id": "Trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "id": "GetMany",
+      "name": "Get Many Messages",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [600, 300],
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 10,
+        "filters": {
+          "includeSpamTrash": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2Api": {
+          "id": "<YOUR_GMAIL_CREDENTIAL_ID>",
+          "name": "Gmail OAuth"
+        }
+      }
+    },
+    {
+      "id": "Loop",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [900, 300],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "GetFull",
+      "name": "Get Full Message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [1200, 300],
+      "parameters": {
+        "operation": "get",
+        "messageId": "={{ $json.id }}"
+      },
+      "credentials": {
+        "gmailOAuth2Api": {
+          "id": "<YOUR_GMAIL_CREDENTIAL_ID>",
+          "name": "Gmail OAuth"
+        }
+      }
+    },
+    {
+      "id": "LoopNext",
+      "name": "Next Batch",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1500, 300],
+      "parameters": {
+        "batchSize": 1
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Many Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Many Messages": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Get Full Message",
+            "typ
