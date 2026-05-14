@@ -56,6 +56,37 @@ Jetsons: 4x Jetson Nano (2x 2GB, 2x 4GB), Maxwell-era. These are edge
 perception nodes for the eventual Vector phase, NOT LLM nodes, and are
 out of scope for the MVP.
 
+## Model topology and naming
+
+Three models across the fabric:
+
+- **Cortex** -- the 4090's heavy reasoner. Qwen3-30B-A3B AWQ 4-bit.
+  The one big model. "Cortex" matches the existing container name and
+  the paper draft's "cortical reasoning engine."
+- **Thalamus** -- the 4070's routing model. Small, roughly 4 to 5 GB
+  quantized. Optional for the MVP; added only if plain orchestration
+  logic is not enough. The thalamus is the brain's relay and routing
+  hub, so the name fits the job.
+- **Embedder** -- the 4070's embedding model, roughly 1 to 2 GB. Turns
+  text into vectors for memory retrieval. Required for the memory
+  layer, not optional.
+
+The 4070 node itself is "Brainstem" (the existing service name).
+
+The two 4070 models are co-resident on its one 12 GB card. By default,
+co-resident models time-slice the GPU rather than truly run at once.
+Real concurrency between them is achievable via NVIDIA MPS or CUDA
+stream overlap, and it is plausible specifically because the Embedder
+is tiny and leaves SM headroom for the Thalamus. MIG (hard GPU
+partitioning) is NOT available on consumer RTX cards, so that route is
+closed. Whether MPS concurrency actually helps is a Phase 1 thing to
+measure, not assume.
+
+Communication between the two 4070 models is fast because they are
+co-located on one host with no network hop. It still goes through the
+orchestration layer and system RAM, not a special GPU path. The slow
+link in the whole fabric remains the 4070 to 4090 LAN hop.
+
 ## Access (how to drive both boxes)
 
 SSH key-based auth is working from the 4090 to the 4070.
