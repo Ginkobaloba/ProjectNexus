@@ -125,16 +125,30 @@ Write-Section "4. pre-commit hooks"
 if ($pyOk) {
     $nexus = Join-Path $DevRoot 'project-nexus'
     if (Test-Path "$nexus\.pre-commit-config.yaml") {
-        Write-Host "Installing pre-commit (pip)"
-        python -m pip install --quiet --user pre-commit
-        Push-Location $nexus
+        # Soft-fail this whole block. A missing pre-commit shouldn't
+        # block the SSH-server setup that follows.
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         try {
-            pre-commit install
-            Write-Host "pre-commit hooks installed in $nexus"
+            Write-Host "Installing pre-commit (pip)"
+            python -m pip install --quiet --user pre-commit
+            Push-Location $nexus
+            try {
+                # Invoke via python -m so we sidestep PATH not being
+                # refreshed after a pip --user install.
+                python -m pre_commit install
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "pre-commit hooks installed in $nexus"
+                } else {
+                    Write-Warning "python -m pre_commit install exited $LASTEXITCODE, continuing"
+                }
+            } finally {
+                Pop-Location
+            }
         } catch {
-            Write-Warning "pre-commit install failed: $_"
+            Write-Warning "pre-commit setup failed: $_  (continuing)"
         } finally {
-            Pop-Location
+            $ErrorActionPreference = $prev
         }
     } else {
         Write-Host "No .pre-commit-config.yaml in project-nexus, skipping"
