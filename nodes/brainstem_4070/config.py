@@ -22,8 +22,12 @@ class Settings(BaseSettings):
     # --Cortex-- 4090 heavy-inference peer (vLLM, OpenAI-compatible API).
     # LAN address of DREWSPC. Override with BRAINSTEM_CORTEX_URL if needed.
     cortex_url: str = "http://192.168.1.140:8000"
-    # Per-request timeout (seconds) for calls to the Cortex endpoint.
+    # Per-request timeout (seconds) for generation calls to Cortex.
     cortex_timeout: float = 120.0
+    # Short timeout for reachability / model-list checks (the dashboard's
+    # /fabric/status poll uses this, so it must stay snappy even if the
+    # 4090 is slow or down).
+    cortex_health_timeout: float = 5.0
 
     # --Metrics harness-- Phase 0 Component G.
     # JSONL sink for per-request metric records (the persistent data

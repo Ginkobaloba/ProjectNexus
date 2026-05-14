@@ -31,23 +31,37 @@ class CortexClient:
     transient connection failures, which is sufficient for Phase 0.
     """
 
-    def __init__(self, base_url: str, timeout: float = 120.0):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float = 120.0,
+        health_timeout: float = 5.0,
+    ):
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+        self.timeout = timeout                 # generation calls; the model is slow
+        self.health_timeout = health_timeout   # reachability / model-list checks; stay snappy
         self._model_id: Optional[str] = None
 
     # -- internals ---------------------------------------------------------
-    def _get(self, path: str) -> Dict[str, Any]:
+    def _get(
+        self,
+        path: str,
+        timeout: Optional[float] = None,
+        retries: int = 2,
+    ) -> Dict[str, Any]:
         url = f"{self.base_url}{path}"
+        timeout = self.timeout if timeout is None else timeout
         last_exc: Optional[Exception] = None
-        for attempt in (1, 2):
+        for attempt in range(1, retries + 1):
             try:
-                res = requests.get(url, timeout=self.timeout)
+                res = requests.get(url, timeout=timeout)
                 res.raise_for_status()
                 return res.json()
-            except requests.RequestException as exc:  # transient: retry once
+            except requests.RequestException as exc:  # transient: retry per `retries`
                 last_exc = exc
-                logger.warning("GET %s failed (attempt %d/2): %s", url, attempt, exc)
+                logger.warning(
+                    "GET %s failed (attempt %d/%d): %s", url, attempt, retries, exc
+                )
         raise CortexError(f"GET {url} failed: {last_exc}") from last_exc
 
     def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -65,8 +79,12 @@ class CortexClient:
 
     # -- public API --------------------------------------------------------
     def list_models(self) -> List[str]:
-        """Return the model ids the Cortex endpoint is serving."""
-        data = self._get("/v1/models")
+        """Return the model ids the Cortex endpoint is serving.
+
+        Uses the short health timeout and does not retry, so reachability
+        and status checks fail fast instead of blocking for the full
+        generation timeout when the 4090 is slow or down."""
+        data = self._get("/v1/models", timeout=self.health_timeout, retries=1)
         return [m["id"] for m in data.get("data", [])]
 
     def resolve_model(self, refresh: bool = False) -> str:
