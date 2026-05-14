@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     stm_limit: int = 20
 
     # --Nas-- Memory
-    nas_url: str = "http://nas_memory:5002"  
+    nas_url: str = "http://nas_memory:5002"
 
     # Service
     host: str = "0.0.0.0"

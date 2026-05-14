@@ -85,7 +85,7 @@ def embed(req: EmbedRequest):
                 "vector_dim": len(vector),
                 "text_snippet": text[:50],
                 "source": "brainstem_4070",
-                "tags": [],  # Could add tag processing later                
+                "tags": [],  # Could add tag processing later
             }
         )
 

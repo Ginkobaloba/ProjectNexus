@@ -24,7 +24,7 @@ services:
     networks:
       - nexusnet
 
-      
+
 networks:
   nexusnet:
     driver: bridge

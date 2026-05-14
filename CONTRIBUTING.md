@@ -1,6 +1,6 @@
 # Contributing to Project Nexus
 
-Thank you for your interest in contributing to Project Nexus —  
+Thank you for your interest in contributing to Project Nexus —
 a distributed, multi-node cognitive architecture composed of:
 
 - **Brainstem nodes** (embedding + short-term memory)

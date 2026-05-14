@@ -25,5 +25,3 @@ EXPOSE 5002
 
 # Start the NAS API
 CMD ["uvicorn", "nas_memory.server:app", "--host", "0.0.0.0", "--port", "5002"]
-
-

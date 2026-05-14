@@ -29,4 +29,3 @@ ENV PYTHONPATH="/app"
 EXPOSE 5001
 
 CMD ["uvicorn", "brainstem_4070.server:app", "--host", "0.0.0.0", "--port", "5001"]
-
