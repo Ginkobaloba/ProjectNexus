@@ -1,22 +1,22 @@
 # Nexus Automation Node
 
-A self-hosted automation engine for **Project Nexus**, powered by **n8n** and deployed via Docker.  
+A self-hosted automation engine for **Project Nexus**, powered by **n8n** and deployed via Docker.
 This service handles workflow execution, event processing, task orchestration, and all automated integrations within the Nexus ecosystem.
 
 ---
 
 ## 🚀 Features
 
-- **Dockerized n8n stack** for simple, reproducible deployment  
-- **Environment template (`.env.example`)** for quick configuration  
-- **Optional Traefik / Cloudflare / NGINX reverse proxy support**  
-- **Automatic backups** (MariaDB/PostgreSQL optional)  
+- **Dockerized n8n stack** for simple, reproducible deployment
+- **Environment template (`.env.example`)** for quick configuration
+- **Optional Traefik / Cloudflare / NGINX reverse proxy support**
+- **Automatic backups** (MariaDB/PostgreSQL optional)
 - **API-ready** for integration with:
   - Nexus Brainstem (validation layer)
   - Nexus Cortex (LLM reasoning engine)
   - NAS memory node (semantic/episodic storage)
   - Local/remote Ollama or TRT-LLM runtimes
-- **Secure external access** with tokens + HTTPS  
+- **Secure external access** with tokens + HTTPS
 - **Designed for long-running stable uptime**
 
 ---
@@ -43,8 +43,8 @@ nexus-automation-node/
 ## 🐳 Deployment
 
 ### Prerequisites
-- Docker + Docker Compose installed  
-- A domain or subdomain if using HTTPS  
+- Docker + Docker Compose installed
+- A domain or subdomain if using HTTPS
 - (Optional) Cloudflare Tunnel or Traefik proxy
 
 ### Quick Start
@@ -117,4 +117,3 @@ Each node is isolated, autonomous, and composable.
 
 📜 License
 MIT License — free to use, modify, deploy, and integrate.
-

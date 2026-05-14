@@ -113,7 +113,7 @@ services:
               "https://www.googleapis.com/auth/gmail"
             ]
           }
-        }      
+        }
       - NEXUS_LABELS={"urgent":"URGENT","financial":"FINANCES","legal":"LEGAL","personal":"PERSONAL","kids":"KIDS","project":"PROJECT_NEXUS","junk":"JUNK"}
 
 
