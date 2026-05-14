@@ -30,7 +30,11 @@ app = FastAPI(
 )
 
 nas = NASClient(settings.nas_url)
-cortex = CortexClient(settings.cortex_url, timeout=settings.cortex_timeout)
+cortex = CortexClient(
+    settings.cortex_url,
+    timeout=settings.cortex_timeout,
+    health_timeout=settings.cortex_health_timeout,
+)
 
 # Phase 0 metric harness. The JSONL file is the persistent data layer;
 # the in-process ring buffer is what the live dashboard reads each poll.
