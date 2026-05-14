@@ -195,3 +195,17 @@ infra/cortex-runtime/models/
 ############################################################
 # END OF .gitignore
 ############################################################
+
+
+##########################
+# VENDORED EXTERNAL TOOLS (not built here, see docs/archived/)
+##########################
+# n8n-mcp was useful before LLM tool-calling matured. Kept on disk as
+# reference, ignored in this repo. Origin: github.com/czlonkowski/n8n-mcp
+Nexus_N8N-MCP/
+
+##########################
+# AUTOMATION RUNTIME STATE
+##########################
+# n8n container volume data, regenerated at runtime; not source
+Nexus-Automation-Node/

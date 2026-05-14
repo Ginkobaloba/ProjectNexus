@@ -1,0 +1,473 @@
+{
+  "name": "Hybrid Email Triage Pipeline",
+  "nodes": [
+    {
+      "id": "ManualTrigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "parameters": {}
+    },
+    {
+      "id": "GetNewEmails",
+      "name": "Get New Emails",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [500, 300],
+      "parameters": {
+        "operation": "getAll",
+        "resource": "message",
+        "additionalFields": {
+          "q": "in:inbox -label:Processed"
+        },
+        "limit": 20
+      }
+    },
+    {
+      "id": "GetFullMessage",
+      "name": "Get Full Message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [750, 300],
+      "parameters": {
+        "operation": "get",
+        "resource": "message",
+        "messageId": "={{$json[\"id\"]}}",
+        "options": {
+          "format": "full",
+          "downloadAttachments": true
+        }
+      }
+    },
+    {
+      "id": "ExtractCleanBody",
+      "name": "Extract Clean Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1000, 300],
+      "parameters": {
+        "language": "javascript",
+        "jsCode": "// Extract a reasonably clean text body from Gmail message
+
+const payload = $json.payload || {};
+const parts = payload.parts || [];
+let text = "";
+
+// Try to find plain text part
+function findTextPart(part) {
+  if (!part) return "";
+  if (part.mimeType === "text/plain" && part.body && part.body.data) {
+    return Buffer.from(part.body.data, "base64").toString("utf8");
+  }
+  if (part.parts && part.parts.length) {
+    for (const p of part.parts) {
+      const res = findTextPart(p);
+      if (res) return res;
+    }
+  }
+  return "";
+}
+
+text = findTextPart(payload);
+
+// If nothing, as a fallback strip HTML from first part with data
+if (!text && parts.length && parts[0].body && parts[0].body.data) {
+  const html = Buffer.from(parts[0].body.data, "base64").toString("utf8");
+  text = html
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const headers = payload.headers || [];
+function header(name) {
+  const h = headers.find(h => h.name.toLowerCase() === name.toLowerCase());
+  return h ? h.value : "";
+}
+
+return [
+  {
+    json: {
+      messageId: $json.id,
+      threadId: $json.threadId,
+      subject: header("Subject"),
+      from: header("From"),
+      to: header("To"),
+      date: header("Date"),
+      cleanBody: text,
+    },
+    binary: $binary // keep attachments
+  }
+];
+"
+      }
+    },
+    {
+      "id": "RuleClassifier",
+      "name": "Rule Classifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1250, 300],
+      "parameters": {
+        "language": "javascript",
+        "jsCode": "const subject = ($json.subject || "").toLowerCase();
+const from = ($json.from || "").toLowerCase();
+const body = ($json.cleanBody || "").toLowerCase();
+
+function contains(text, words) {
+  return words.some(w => text.includes(w));
+}
+
+let category = "other";
+let urgency = "low";
+let needsReply = false;
+
+// SCHOOL
+if (contains(from, ["elmbrook", "school", "brookfield"])) {
+  category = "school";
+}
+
+// LEGAL
+if (contains(from, ["wisconsin.gov", "court", "justice"]) ||
+    contains(subject, ["hearing", "motion", "order"])) {
+  category = "legal";
+  urgency = "high";
+}
+
+// BILLS
+if (contains(subject, ["invoice", "payment", "due", "bill"])) {
+  category = "bill";
+}
+
+// FAMILY
+if (contains(from, ["amanda", "mattick", "family"])) {
+  category = "family";
+}
+
+// WORK
+if (contains(from, ["planetfitness", "schmidtys", "payroll"])) {
+  category = "work";
+}
+
+// SPAM
+if (contains(subject, ["congratulations", "winner", "promo"])) {
+  category = "spam";
+}
+
+// URGENCY
+if (contains(body, ["urgent", "asap", "immediately", "important"])) {
+  urgency = "high";
+}
+
+// Needs reply?
+if (contains(body, ["please respond", "let me know", "reply", "can you"])) {
+  needsReply = true;
+}
+
+return [
+  {
+    json: {
+      ...$json,
+      ruleCategory: category,
+      ruleUrgency: urgency,
+      ruleNeedsReply: needsReply
+    },
+    binary: $binary
+  }
+];
+"
+      }
+    },
+    {
+      "id": "AIClassifier",
+      "name": "AI Classifier (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1500, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "jsonParameters": true,
+        "options": {
+          "responseFormat": "json"
+        },
+        "headerParametersJson": "={\"Authorization\": \"Bearer {{$env.OPENAI_API_KEY}}\", \"Content-Type\": \"application/json\"}",
+        "bodyParametersJson": "{
+  "model": "gpt-4.1-mini",
+  "temperature": 0.2,
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are an email classification system integrated into a hybrid AI pipeline. You refine rule-based classifications and output ONLY strict JSON with fields: urgency (high|medium|low), category (school|legal|family|work|bill|spam|personal|other), needsReply (true/false), summary (short sentence), confidence (0-1). No extra text."
+    },
+    {
+      "role": "user",
+      "content": "Subject: {{$json[\"subject\"]}}\n\nBody: {{$json[\"cleanBody\"]}}\n\nRule results: {{JSON.stringify({ ruleCategory: $json[\"ruleCategory\"], ruleUrgency: $json[\"ruleUrgency\"], ruleNeedsReply: $json[\"ruleNeedsReply\"] })}}"
+    }
+  ]
+}
+"
+      }
+    },
+    {
+      "id": "MergeClassification",
+      "name": "Merge Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1750, 300],
+      "parameters": {
+        "language": "javascript",
+        "jsCode": "const aiContent = $json.body.choices[0].message.content;
+
+let ai = {};
+try {
+  ai = JSON.parse(aiContent);
+} catch (e) {
+  ai = {
+    urgency: $json.ruleUrgency || "low",
+    category: $json.ruleCategory || "other",
+    needsReply: $json.ruleNeedsReply || false,
+    summary: "AI parse error, fallback to rules",
+    confidence: 0.3,
+  };
+}
+
+return [
+  {
+    json: {
+      messageId: $items(0)[0].json.messageId,
+      threadId: $items(0)[0].json.threadId,
+      subject: $items(0)[0].json.subject,
+      from: $items(0)[0].json.from,
+      to: $items(0)[0].json.to,
+      date: $items(0)[0].json.date,
+      cleanBody: $items(0)[0].json.cleanBody,
+      ruleCategory: $items(0)[0].json.ruleCategory,
+      ruleUrgency: $items(0)[0].json.ruleUrgency,
+      ruleNeedsReply: $items(0)[0].json.ruleNeedsReply,
+      aiUrgency: ai.urgency,
+      aiCategory: ai.category,
+      aiNeedsReply: ai.needsReply,
+      summary: ai.summary,
+      confidence: ai.confidence
+    },
+    binary: $items(0)[0].binary
+  }
+];
+"
+      }
+    },
+    {
+      "id": "MoveBinary",
+      "name": "Move Binary Data",
+      "type": "n8n-nodes-base.moveBinaryData",
+      "typeVersion": 1,
+      "position": [2000, 150],
+      "parameters": {
+        "mode": "binaryToBinary",
+        "sourceKey": "",
+        "destinationKey": "data"
+      }
+    },
+    {
+      "id": "UploadAttachments",
+      "name": "Upload Attachments",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 1,
+      "position": [2250, 150],
+      "parameters": {
+        "operation": "upload",
+        "binaryData": true,
+        "binaryProperty": "data"
+      }
+    },
+    {
+      "id": "LogToSheets",
+      "name": "Log to Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 1,
+      "position": [2000, 300],
+      "parameters": {
+        "operation": "append",
+        "valueInputMode": "RAW"
+      }
+    },
+    {
+      "id": "ApplyLabels",
+      "name": "Apply Gmail Labels",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [2000, 450],
+      "parameters": {
+        "operation": "modify",
+        "resource": "message",
+        "messageId": "={{$json[\"messageId\"]}}",
+        "options": {
+          "addLabelIds": ["Processed"],
+          "removeLabelIds": ["INBOX"]
+        }
+      }
+    },
+    {
+      "id": "IFUrgent",
+      "name": "IF Urgent / Needs Reply",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2250, 450],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"aiNeedsReply\"]}}"
+            }
+          ],
+          "string": [
+            {
+              "value1": "={{$json[\"aiUrgency\"]}}",
+              "operation": "equal",
+              "value2": "high"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "SendNotification",
+      "name": "Send Notification Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [2500, 450],
+      "parameters": {
+        "operation": "send",
+        "resource": "message",
+        "toList": [
+          {
+            "email": "<REDACTED_EMAIL>"
+          }
+        ],
+        "subject": "=[\"[URGENT] \", $json[\"aiCategory\"] || $json[\"ruleCategory\"], \" – \", $json[\"subject\"]].join(\"\")",
+        "message": "={{\"From: \" + $json[\"from\"] + \"\\n\\nSummary: \" + $json[\"summary\"]}}"
+      }
+    }
+  ],
+  "connections": {
+    "Get New Emails": {
+      "main": [
+        [
+          {
+            "node": "Get Full Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get New Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Full Message": {
+      "main": [
+        [
+          {
+            "node": "Extract Clean Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Clean Body": {
+      "main": [
+        [
+          {
+            "node": "Rule Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rule Classifier": {
+      "main": [
+        [
+          {
+            "node": "AI Classifier (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Classifier (HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Merge Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Classification": {
+      "main": [
+        [
+          {
+            "node": "Move Binary Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log to Sheets",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Apply Gmail Labels",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Urgent / Needs Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move Binary Data": {
+      "main": [
+        [
+          {
+            "node": "Upload Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Urgent / Needs Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Notification Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  }
+}
