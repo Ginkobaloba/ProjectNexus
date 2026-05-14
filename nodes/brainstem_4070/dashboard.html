@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nexus Fabric - Phase 0</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --line: #2a3340;
+    --text: #d7dee8;
+    --muted: #8b97a7;
+    --accent: #5db0ff;
+    --ok: #3fb950;
+    --bad: #f85149;
+    --warn: #d29922;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px; line-height: 1.45;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
+  header { display: flex; align-items: baseline; justify-content: space-between;
+    flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: 0.2px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .updated { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .updated b { color: var(--text); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); margin: 28px 0 10px; font-weight: 600; }
+  .grid { display: grid; gap: 12px; }
+  .topology { grid-template-columns: 1fr auto 1fr; align-items: stretch; }
+  .nodes-extra { grid-template-columns: 1fr 1fr; margin-top: 12px; }
+  .metrics { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 760px) {
+    .topology, .nodes-extra, .metrics { grid-template-columns: 1fr; }
+    .link-cell { transform: rotate(90deg); padding: 18px 0; }
+  }
+  .card { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; }
+  .card.node { display: flex; flex-direction: column; gap: 6px; }
+  .card .role { color: var(--muted); font-size: 12px; }
+  .card .name { font-weight: 600; font-size: 15px; }
+  .statusline { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none;
+    box-shadow: 0 0 0 3px rgba(255,255,255,0.04); }
+  .dot.up { background: var(--ok); }
+  .dot.down { background: var(--bad); }
+  .dot.unknown { background: var(--warn); }
+  .state { font-family: var(--mono); font-size: 12px; }
+  .state.up { color: var(--ok); }
+  .state.down { color: var(--bad); }
+  .state.unknown { color: var(--warn); }
+  .kv { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .kv b { color: var(--text); font-weight: 500; }
+  .link-cell { display: flex; flex-direction: column; align-items: center;
+    justify-content: center; min-width: 130px; padding: 0 8px; }
+  .link-arrow { font-family: var(--mono); font-size: 13px; letter-spacing: 1px; }
+  .link-arrow.healthy { color: var(--ok); }
+  .link-arrow.broken { color: var(--bad); }
+  .link-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-align: center; }
+  .metric { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; }
+  .metric .title { font-size: 12px; color: var(--muted); }
+  .metric .big { font-size: 26px; font-family: var(--mono); margin: 6px 0 2px;
+    font-weight: 600; }
+  .metric .big small { font-size: 13px; color: var(--muted); font-weight: 400; }
+  .metric .sub { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono);
+    font-size: 12px; }
+  th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; text-transform: uppercase;
+    letter-spacing: 0.05em; font-size: 10.5px; }
+  th:first-child, td:first-child { text-align: left; }
+  tr:last-child td { border-bottom: none; }
+  td.ok { color: var(--ok); }
+  td.bad { color: var(--bad); }
+  .empty { color: var(--muted); padding: 18px 4px; font-size: 13px; }
+  .pill { font-family: var(--mono); font-size: 11px; padding: 1px 7px;
+    border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  footer { margin-top: 34px; color: var(--muted); font-size: 11px;
+    font-family: var(--mono); border-top: 1px solid var(--line); padding-top: 12px; }
+  .err { color: var(--bad); font-family: var(--mono); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Nexus Fabric <span>/ Phase 0 / the two boxes can talk</span></h1>
+    <div class="updated">
+      <span id="pulse" class="pill">connecting...</span>
+      updated <b id="updated">never</b>
+    </div>
+  </header>
+
+  <h2>Topology</h2>
+  <div class="grid topology">
+    <div class="card node" id="node-4070">
+      <span class="role">orchestrator / brainstem</span>
+      <span class="name"><REDACTED_HOSTNAME> (RTX 4070)</span>
+      <div class="statusline"><span class="dot unknown"></span><span class="state unknown">...</span></div>
+      <div class="kv" data-field="detail"></div>
+    </div>
+    <div class="link-cell">
+      <div class="link-arrow" id="link-arrow">--&gt;</div>
+      <div class="link-label" id="link-label">LAN link</div>
+    </div>
+    <div class="card node" id="node-4090">
+      <span class="role">heavy inference / cortex</span>
+      <span class="name">DREWSPC (RTX 4090)</span>
+      <div class="statusline"><span class="dot unknown"></span><span class="state unknown">...</span></div>
+      <div class="kv" data-field="detail"></div>
+    </div>
+  </div>
+  <div class="grid nodes-extra">
+    <div class="card node" id="node-nas">
+      <span class="role">memory substrate / NAS</span>
+      <span class="name">NAS memory service</span>
+      <div class="statusline"><span class="dot unknown"></span><span class="state unknown">...</span></div>
+      <div class="kv" data-field="detail"></div>
+    </div>
+    <div class="card">
+      <span class="role">run</span>
+      <div class="kv" id="run-info">waiting for first poll...</div>
+    </div>
+  </div>
+
+  <h2>Round-trip latency <span class="pill" id="window-pill"></span></h2>
+  <div class="grid metrics">
+    <div class="metric" id="m-total">
+      <div class="title">End to end (p95)</div>
+      <div class="big">--<small> ms</small></div>
+      <div class="sub">p50 -- / p99 --</div>
+    </div>
+    <div class="metric" id="m-cortex">
+      <div class="title">Cortex round trip (p95)</div>
+      <div class="big">--<small> ms</small></div>
+      <div class="sub">p50 -- / p99 --</div>
+    </div>
+    <div class="metric" id="m-overhead">
+      <div class="title">Brainstem overhead (p95)</div>
+      <div class="big">--<small> ms</small></div>
+      <div class="sub">p50 -- / p99 --</div>
+    </div>
+    <div class="metric" id="m-tokens">
+      <div class="title">Generation throughput (p50)</div>
+      <div class="big">--<small> tok/s</small></div>
+      <div class="sub">p95 -- / max --</div>
+    </div>
+  </div>
+
+  <h2>Recent round trips</h2>
+  <div class="card" style="padding: 4px 6px;">
+    <table id="recent">
+      <thead>
+        <tr>
+          <th>when (UTC)</th><th>total ms</th><th>cortex ms</th>
+          <th>overhead ms</th><th>tokens</th><th>tok/s</th><th>result</th>
+        </tr>
+      </thead>
+      <tbody><tr><td colspan="7" class="empty">no round trips recorded yet</td></tr></tbody>
+    </table>
+  </div>
+
+  <footer id="footer">
+    Phase 0 metric harness. Latency stats are over the rolling in-process window;
+    the persistent JSONL log is the source of truth for offline analysis.
+  </footer>
+</div>
+
+<script>
+const POLL_MS = 4000;
+let failures = 0;
+
+function fmt(n, digits) {
+  if (n === null || n === undefined || n === "" || Number.isNaN(n)) return "--";
+  return Number(n).toFixed(digits === undefined ? 1 : digits);
+}
+function setNode(elId, node) {
+  const el = document.getElementById(elId);
+  if (!el || !node) return;
+  const status = (node.status || "unknown").toLowerCase();
+  el.querySelector(".dot").className = "dot " + status;
+  const state = el.querySelector(".state");
+  state.className = "state " + status;
+  state.textContent = status;
+  const kv = el.querySelector(".kv");
+  let bits = [];
+  if (node.model) bits.push("model <b>" + node.model.split("/").pop() + "</b>");
+  if (node.probe_rtt_ms !== undefined) bits.push("probe <b>" + fmt(node.probe_rtt_ms) + " ms</b>");
+  if (node.url) bits.push(node.url);
+  if (status === "down" && node.detail) {
+    kv.innerHTML = '<span class="err">' + String(node.detail).slice(0, 160) + '</span>';
+  } else {
+    kv.innerHTML = bits.join(" &middot; ");
+  }
+}
+function setMetric(elId, summary, unit, primaryKey, line2) {
+  const el = document.getElementById(elId);
+  if (!el || !summary) return;
+  el.querySelector(".big").innerHTML = fmt(summary[primaryKey]) + "<small> " + unit + "</small>";
+  el.querySelector(".sub").textContent = line2(summary);
+}
+async function poll() {
+  try {
+    const res = await fetch("/fabric/status", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const d = await res.json();
+    failures = 0;
+
+    document.getElementById("updated").textContent =
+      (d.generated_at || "").replace("T", " ").replace(/\..*/, "") + " UTC";
+    const pulse = document.getElementById("pulse");
+    pulse.textContent = "live"; pulse.style.color = "var(--ok)";
+    pulse.style.borderColor = "var(--ok)";
+
+    setNode("node-4070", d.nodes && d.nodes.brainstem_4070);
+    setNode("node-4090", d.nodes && d.nodes.cortex_4090);
+    setNode("node-nas", d.nas);
+
+    const link = d.link || {};
+    const arrow = document.getElementById("link-arrow");
+    const label = document.getElementById("link-label");
+    arrow.className = "link-arrow " + (link.healthy ? "healthy" : "broken");
+    arrow.textContent = link.healthy ? "===&gt;" : "--X--";
+    label.textContent = link.healthy ? "LAN link up" : "LAN link down";
+
+    const m = d.metrics || {};
+    document.getElementById("window-pill").textContent =
+      (m.ok_count || 0) + " ok / " + (m.fail_count || 0) + " fail / window " + (m.window || 0);
+    setMetric("m-total", m.total_ms, "ms", "p95",
+      s => "p50 " + fmt(s.p50) + " / p99 " + fmt(s.p99));
+    setMetric("m-cortex", m.cortex_roundtrip_ms, "ms", "p95",
+      s => "p50 " + fmt(s.p50) + " / p99 " + fmt(s.p99));
+    setMetric("m-overhead", m.brainstem_overhead_ms, "ms", "p95",
+      s => "p50 " + fmt(s.p50) + " / p99 " + fmt(s.p99));
+    setMetric("m-tokens", m.tokens_per_s, "tok/s", "p50",
+      s => "p95 " + fmt(s.p95) + " / max " + fmt(s.max));
+
+    const runInfo = document.getElementById("run-info");
+    runInfo.innerHTML = "metrics log <b>" + (m.metrics_path || "?") + "</b>";
+
+    const tbody = document.querySelector("#recent tbody");
+    const rows = d.recent_roundtrips || [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">no round trips recorded yet</td></tr>';
+    } else {
+      tbody.innerHTML = rows.map(r => {
+        const when = (r.ts_wall_iso || "").replace("T", " ").replace(/\..*/, "");
+        const cls = r.ok ? "ok" : "bad";
+        const result = r.ok ? "ok" : "fail";
+        return "<tr>" +
+          "<td>" + when + "</td>" +
+          "<td>" + fmt(r.total_ms) + "</td>" +
+          "<td>" + fmt(r.cortex_roundtrip_ms) + "</td>" +
+          "<td>" + fmt(r.brainstem_overhead_ms) + "</td>" +
+          "<td>" + (r.completion_tokens || 0) + "</td>" +
+          "<td>" + fmt(r.tokens_per_s) + "</td>" +
+          "<td class='" + cls + "'>" + result + "</td>" +
+          "</tr>";
+      }).join("");
+    }
+  } catch (e) {
+    failures += 1;
+    const pulse = document.getElementById("pulse");
+    pulse.textContent = "stale (" + failures + ")";
+    pulse.style.color = "var(--bad)";
+    pulse.style.borderColor = "var(--bad)";
+  } finally {
+    setTimeout(poll, POLL_MS);
+  }
+}
+poll();
+</script>
+</body>
+</html>

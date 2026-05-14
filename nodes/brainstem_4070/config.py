@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     # Per-request timeout (seconds) for calls to the Cortex endpoint.
     cortex_timeout: float = 120.0
 
+    # --Metrics harness-- Phase 0 Component G.
+    # JSONL sink for per-request metric records (the persistent data
+    # layer). The live dashboard reads an in-process ring buffer of the
+    # last `metrics_window` records rather than re-reading the file.
+    metrics_path: str = "/data/metrics/brainstem_metrics.jsonl"
+    metrics_window: int = 200
+
     # Service
     host: str = "0.0.0.0"
     port: int = 5001
