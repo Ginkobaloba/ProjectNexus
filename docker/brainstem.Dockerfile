@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir \
     "uvicorn[standard]" \
     sentence-transformers \
     pydantic \
-    pydantic-settings
+    pydantic-settings \
+    requests
 
 # Add /app to Python import path
 ENV PYTHONPATH="/app"

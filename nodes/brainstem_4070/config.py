@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     # --Nas-- Memory
     nas_url: str = "http://nas_memory:5002"
 
+    # --Cortex-- 4090 heavy-inference peer (vLLM, OpenAI-compatible API).
+    # LAN address of DREWSPC. Override with BRAINSTEM_CORTEX_URL if needed.
+    cortex_url: str = "http://192.168.1.140:8000"
+    # Per-request timeout (seconds) for calls to the Cortex endpoint.
+    cortex_timeout: float = 120.0
+
     # Service
     host: str = "0.0.0.0"
     port: int = 5001
