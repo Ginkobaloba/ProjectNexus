@@ -154,6 +154,9 @@ sessions/
 # Episodic logs (optional to track — up to you)
 data/nas/episodic.jsonl
 
+# Phase 0 metric harness JSONL sink (regenerated at runtime, not source)
+data/metrics/
+
 # If you don’t want episodic logs committed, uncomment:
 # data/nas/episodic.jsonl
 
