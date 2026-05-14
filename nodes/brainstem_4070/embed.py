@@ -1,15 +1,22 @@
 # nodes/brainstem_4070/embed.py
-from typing import List
+from typing import TYPE_CHECKING, List
 
-from sentence_transformers import SentenceTransformer
 from .config import settings
 
-_model: SentenceTransformer | None = None
+if TYPE_CHECKING:  # import only for type checkers, not at runtime
+    from sentence_transformers import SentenceTransformer
+
+# sentence-transformers (and torch) is a heavy import. Keep it lazy so the
+# service can start and serve the Cortex-relay path without paying the cost
+# of loading the embedding stack until an embedding endpoint is actually hit.
+_model: "SentenceTransformer | None" = None
 
 
-def get_model() -> SentenceTransformer:
+def get_model() -> "SentenceTransformer":
     global _model
     if _model is None:
+        from sentence_transformers import SentenceTransformer
+
         _model = SentenceTransformer(settings.model_name, device=settings.device)
     return _model
 
