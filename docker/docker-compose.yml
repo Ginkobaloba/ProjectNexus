@@ -5,12 +5,22 @@ services:
       context: ..
       dockerfile: docker/brainstem.Dockerfile
     container_name: brainstem_4070
+    restart: unless-stopped
     ports:
       - "5001:5001"
     environment:
       - BRAINSTEM_DEVICE=cpu
       # 4090 Cortex inference peer (vLLM OpenAI-compatible API) over the LAN.
       - BRAINSTEM_CORTEX_URL=http://192.168.1.140:8000
+      # NAS memory service, reached by compose-network DNS.
+      - BRAINSTEM_NAS_URL=http://nas_memory:5002
+      # Phase 0 metric harness: which fabric components are live this run.
+      - NEXUS_BUILD_STATE=brainstem+cortex+nas
+    volumes:
+      # Phase 0 metric harness JSONL sink, persisted on the 4070 SSD.
+      - ../data/metrics:/data/metrics
+    depends_on:
+      - nas
     networks:
       - nexusnet
 
@@ -19,6 +29,7 @@ services:
       context: ..
       dockerfile: docker/nas.Dockerfile
     container_name: nas_memory
+    restart: unless-stopped
     ports:
       - "5002:5002"
     volumes:
