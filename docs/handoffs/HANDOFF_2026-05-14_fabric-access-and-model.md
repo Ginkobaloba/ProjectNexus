@@ -1,4 +1,4 @@
-# Handoff: 2026-05-14 — Fabric access established, model staged
+﻿# Handoff: 2026-05-14 â€” Fabric access established, model staged
 
 This handoff compacts a long working session. A fresh session should
 be able to pick up from here without the back-and-forth context.
@@ -108,13 +108,13 @@ to be reconfigured to point at the AWQ model above.
 ## Docker state (4090)
 
 Containers present (all stopped unless noted):
-- `qwen-vllm` — vLLM, was running the too-big FP8 coder model, crashed.
+- `qwen-vllm` â€” vLLM, was running the too-big FP8 coder model, crashed.
   Reconfigure this to the AWQ model.
-- `cortex` — older vLLM (v0.15.1), exited.
-- `trtllm` — TensorRT-LLM container, never got working. High-value
+- `cortex` â€” older vLLM (v0.15.1), exited.
+- `trtllm` â€” TensorRT-LLM container, never got working. High-value
   future work: TRT-LLM compiles to the actual CUDA kernel topology,
   big perf upside. Deferred to Phase 1 inference optimization.
-- `n8n`, `traefik`, `cloudflared` — the automation stack, stopped.
+- `n8n`, `traefik`, `cloudflared` â€” the automation stack, stopped.
 
 HF cache is bind-mounted: `C:\Users\Drama\.cache\huggingface` ->
 `/root/.cache/huggingface` inside `qwen-vllm`. The new model is
@@ -154,6 +154,16 @@ the commit needs a re-stage + re-commit. Budget for one retry.
   plain systems-characterization paper.
 - DB on the 4070's local SSD, not the 4090 NVMe, because the 4070 is
   the heavy DB reader.
+- The 4070 runs an embedding model plus optionally a small routing
+  LLM, coexisting on its one 12GB card (the embedding model is
+  required for the memory layer; the routing LLM is optional and we
+  add it only if plain orchestration logic isn't enough for the MVP).
+- The fabric's performance thesis is pipeline overlap across the two
+  boxes (4070 preps query N+1 while the 4090 reasons on query N), not
+  shared VRAM and not concurrent models on one card. The boxes are
+  separate machines with separate VRAM; the 4070<->4090 link is a LAN
+  hop and is the slowest link in the system. Experiment 1 tests
+  whether the overlap win beats the network-hop cost.
 
 ## Next steps (pick up here)
 
