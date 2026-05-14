@@ -1,0 +1,162 @@
+Nexus: A Biologically Inspired Distributed Cognitive Architecture Using Consumer-Grade GPU Nodes and Edge Devices
+Draft Version - For Revision
+
+Abstract
+This paper introduces Nexus, a biologically inspired distributed cognitive architecture implemented using heterogeneous consumer-grade hardware. Nexus models core principles of biological cognition-layered perception, memory filtering, consolidation, and hierarchical reasoning-by distributing functions across Jetson edge devices, mid-tier GPU systems, a network-attached storage (NAS) memory substrate, and a high-end GPU node. The architecture incorporates five synthetic "organs": (1) Jetson peripheral sensory processors, (2) a 4070-based brainstem/thalamus validation and instinct engine, (3) a NAS functioning as long-term memory, (4) a 4090-based cortical reasoning engine, and (5) a planned memory-consolidation node that performs replay, deduplication, and schema enforcement. Nexus demonstrates how multi-device consumer setups can emulate principles of biological cognition, enabling scalable, fault-tolerant, and safety-oriented synthetic intelligence systems.
+
+1. Introduction
+Artificial intelligence systems increasingly draw inspiration from biological cognition to address limitations in generalization, memory, safety, and adaptability. While large monolithic models perform high-level reasoning, they lack layered perception, structured long-term memory, and the intentional forgetting mechanisms that biological systems use to remain efficient and context-aware.
+This work proposes Nexus, a synthetic cognitive architecture designed to mimic the distributed, hierarchical organization of the human nervous system using accessible, consumer-grade hardware. Nexus distributes cognition across specialized nodes arranged to resemble the peripheral nervous system, brainstem, hippocampus, and neocortex. Each node fulfills a biologically analogous role and contributes to an emergent cognitive process that prioritizes filtering, consolidation, and abstraction rather than raw storage of all inputs.
+The central contributions of this work are:
+1. A hardware-aware cognitive architecture whose components map directly to biological structures.
+2. A memory system explicitly built around filtering, consolidation, and semantic abstraction.
+3. A demonstration of how multi-device consumer hardware can form a synthetic cognitive organism.
+4. An initial framework for experiments evaluating memory retention, hallucination rejection, and distributed reasoning.
+This paper outlines the architecture, implementation, and early results, and provides a roadmap for future development including autonomous consolidation and self-modifying memory structures.
+
+2. Related Work
+Nexus draws from several intersecting research areas:
+2.1 Cognitive Architectures
+Frameworks such as SOAR, ACT-R, and LIDA model memory, attention, and reasoning but generally run as monolithic systems without distributed sensory layers or biologically mapped hardware roles.
+2.2 Distributed AI Systems
+Distributed inference pipelines (e.g., DeepStream, federated learning, edge-cloud hybrids) provide technical foundations for multi-node AI workflows, but lack structured memory hierarchies modeled on biological cognition.
+2.3 AGI Research
+Contemporary AGI proposals (hierarchical world models, memory-augmented transformers, agentic systems) highlight the need for layered processing and persistent memory. Nexus contributes a practical, hardware-grounded prototype of these ideas.
+2.4 Biological Memory & Consolidation
+Neuroscientific models of hippocampal replay, forgetting, semantic abstraction, and thalamic filtering directly inspire Nexus's tiered memory substrate and validation layers.
+
+3. System Architecture
+Nexus consists of five major components connected via local network:
+1. Jetsons (Peripheral Nervous System)
+2. 4070 System (Brainstem / Thalamus)
+3. NAS (Hippocampus / Long-Term Memory)
+4. 4090 System (Cortex)
+5. Future Memory Node (Sleep / Consolidation Engine)
+3.1 Jetsons - Peripheral Nervous System
+* Raw sensory capture (video, audio, environmental data)
+* Lightweight, low-latency inference models
+* API polling / email monitoring
+* Early-stage preprocessing
+* Signal transmission to the 4070
+* Unreliable or noisy signals are expected-Jetsons behave like real nerves
+3.2 4070 - Brainstem / Thalamus
+Functions include:
+* Cleaning and validating sensory input
+* Instinctual behavior: fixed rules, safety checks, procedural scripts
+* Short-term memory buffer
+* Embedding generation and compression
+* Gatekeeping for long-term memory
+* Instruction routing back to Jetsons
+* Writing validated memory snapshots to NAS
+This node defines what the system notices.
+3.3 NAS - Hippocampus / Long-Term Memory
+Structured storage includes:
+* Semantic memory (vector embeddings, concept graphs)
+* Episodic memory (temporal logs, "experiences")
+* Knowledge graphs linking entities and events
+* Decay mechanisms that prune unimportant information
+* Optional raw cold storage for large artifacts
+The NAS is optimized for retrieval and long-term anchoring.
+3.4 4090 - Cortex
+The reasoning core performs:
+* High-level analysis and planning
+* Complex decision-making
+* Multi-agent orchestration
+* Retrieval-augmented generation
+* Integration of episodic + semantic memory
+* Task routing (downwards to 4070, across to NAS)
+* Writes refined knowledge into semantic memory
+It acts as the deliberate, reflective part of the synthetic mind.
+3.5 Memory Node - Sleep Engine (Future)
+During low-activity periods, the memory node will:
+* Re-embed older chunks using newer models
+* Cluster and reorganize semantic memory
+* Summarize logs into narratives
+* Deduplicate redundant memory
+* Clean up schemas and enforce consistent structure
+* Perform "dream-like" replay cycles
+This node ensures memory stays compact, coherent, and efficient.
+
+4. Memory Architecture
+Memory in Nexus is explicitly non-perfect and intentionally filtered. Key components include:
+4.1 Short-Term Memory (STM)
+* Stored on 4070
+* Fast, transient, overwritten frequently
+* Holds only recent validated signals
+4.2 Long-Term Memory (LTM)
+* Stored on NAS
+* Structured as:
+o Semantic embeddings
+o Episodic logs
+o Knowledge graphs
+* Supports time-based decay
+* Retains compressed, abstract information rather than raw streams
+4.3 Procedural Memory
+* Reflexive behaviors, routines, safety rules
+* Stored on 4070
+* Executes instantly without involving the 4090
+4.4 Semantic vs Instinctual Processing
+* Instinct (4070): rule-based, immediate
+* Semantic (4090): contextual, knowledge-driven
+* Interaction: instincts filter what the cortex ever sees
+4.5 Forgetting as a Feature
+* Reduces noise accumulation
+* Forces abstraction
+* Enables efficient retrieval
+* Mimics biological systems
+
+5. Implementation
+5.1 Hardware
+* Jetsons (Nano, Xavier, or Orin variants)
+* 4070 system (mid-tier GPU for embeddings + filters)
+* NAS (ZFS or btrfs, with vector DB)
+* 4090 system (high-end GPU for LLM inference + planning)
+* Memory Node (future low-power consolidation device)
+5.2 Software Stack
+* Containers for modularity
+* MQTT / ZeroMQ / REST / gRPC for messaging
+* Local vector database (Weaviate/Chroma/Qdrant)
+* Procedural rules engine for instincts
+* LLM orchestration layer on 4090
+* Replay + consolidation scripts (future)
+
+6. Experiments (Planned)
+1. Latency + Throughput Tests
+o Jetson ? 4070 ? NAS ? 4090 pipe
+o Multi-modal testing (video, text, audio)
+2. Hallucination Rejection Testing
+o Inject corrupted or misleading sensory data
+o Measure 4070's filter accuracy
+3. Memory Retention / Forgetting Trials
+o Compare semantic recall over days/weeks
+o Evaluate decay mechanisms
+4. Planning + Multi-Agent Tests
+o 4090 orchestrated tasks with feedback loops
+5. Sleep Engine Trials (future)
+o Evaluate embedding refresh
+o Measure search quality before/after consolidation
+
+7. Results
+(Will be filled in as systems come online)
+Preliminary observations indicate that distributed cognition reduces hallucinations, increases situational grounding, and improves memory organization relative to monolithic systems.
+
+8. Discussion
+Nexus illustrates how principles of biological cognition can be mapped to accessible hardware. The architecture benefits from:
+* Safety via layered filtering
+* Scalability by adding more nodes
+* Memory robustness through structured LTM
+* Efficiency thanks to selective forgetting
+Remaining challenges include consistent schema enforcement, minimizing network latency, and developing a fully automated consolidation engine.
+
+9. Conclusion
+Nexus provides a blueprint for constructing a synthetic cognitive organism using commodity hardware. By modeling biological systems-perception, gating, memory, abstraction, sleep-the architecture offers a practical pathway toward safer, more grounded, and more adaptive AI systems.
+Future work includes automated memory consolidation, distributed agent models, and integration of real-world robotic outputs.
+
+References
+(To be added as we cite specific papers)
+
+Appendix
+* Sample memory schemas
+* Communication packet formats
+* Hardware bill of materials
+* Proposed experimental datasets

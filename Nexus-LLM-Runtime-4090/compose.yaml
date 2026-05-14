@@ -1,0 +1,31 @@
+services:
+  trtllm:
+    container_name: trtllm
+    image: nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc5
+
+    # --- GPU / IPC ---
+    runtime: nvidia
+    ipc: host
+
+    # --- Networking ---
+    ports:
+      - "8000:8000"
+
+    # --- Model mount ---
+    volumes:
+      - "C:/Users/Drama/Desktop/Nexus-LLM-Runtime-4090/models:/app/tensorrt_llm/models"
+
+    # --- Environment ---
+    environment:
+      TRTLLM_DISABLE_UCX: "1"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+    # --- Memory limits (required for TRT-LLM) ---
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+    # --- Keep container alive for interactive or server use ---
+    tty: true
+    stdin_open: true
