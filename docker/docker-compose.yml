@@ -9,6 +9,8 @@ services:
       - "5001:5001"
     environment:
       - BRAINSTEM_DEVICE=cpu
+      # 4090 Cortex inference peer (vLLM OpenAI-compatible API) over the LAN.
+      - BRAINSTEM_CORTEX_URL=http://192.168.1.140:8000
     networks:
       - nexusnet
 

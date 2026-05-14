@@ -11,17 +11,19 @@ from brainstem_4070.config import settings
 from brainstem_4070.embed import embed_texts
 from brainstem_4070.stm_buffer import STMItem, stm_buffer
 from brainstem_4070.filter import basic_validation
+from brainstem_4070.cortex_client import CortexClient, CortexError
 
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger("brainstem_4070")
 
 app = FastAPI(
     title="Nexus Brainstem (4070)",
-    description="Embedding + filtering + STM buffer for ProjectNexus.",
-    version="0.1.0",
+    description="Embedding + filtering + STM buffer + Cortex relay for ProjectNexus.",
+    version="0.2.0",
 )
 
 nas = NASClient(settings.nas_url)
+cortex = CortexClient(settings.cortex_url, timeout=settings.cortex_timeout)
 
 class HealthResponse(BaseModel):
     status: str
@@ -45,6 +47,21 @@ class STMWriteRequest(BaseModel):
 class STMWriteResponse(BaseModel):
     id: str
     stored: bool
+
+
+class GenerateRequest(BaseModel):
+    prompt: str
+    system: Optional[str] = None
+    max_tokens: int = 512
+    temperature: float = 0.7
+
+
+class GenerateResponse(BaseModel):
+    text: str
+    model: str
+    finish_reason: Optional[str] = None
+    usage: dict
+    source: str = "cortex_4090"
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -118,3 +135,43 @@ def stm_write(req: STMWriteRequest):
     logger.info("STM stored item %s", item_id)
 
     return STMWriteResponse(id=item_id, stored=True)
+
+
+@app.get("/cortex/health")
+def cortex_health():
+    """Reachability check for the 4090 Cortex inference peer."""
+    status = cortex.health()
+    status["cortex_url"] = settings.cortex_url
+    return status
+
+
+@app.post("/generate", response_model=GenerateResponse)
+def generate(req: GenerateRequest):
+    """Relay a prompt to the 4090 Cortex and return its generated text.
+
+    This is the 4070 -> 4090 leg of the fabric: brainstem accepts the request
+    locally and the heavy reasoning happens on the 4090.
+    """
+    try:
+        result = cortex.generate(
+            prompt=req.prompt,
+            system=req.system,
+            max_tokens=req.max_tokens,
+            temperature=req.temperature,
+        )
+    except CortexError as exc:
+        logger.error("Cortex relay failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Cortex unreachable: {exc}")
+
+    logger.info(
+        "Cortex relay ok: model=%s finish=%s tokens=%s",
+        result["model"],
+        result.get("finish_reason"),
+        result.get("usage"),
+    )
+    return GenerateResponse(
+        text=result["text"],
+        model=result["model"],
+        finish_reason=result.get("finish_reason"),
+        usage=result.get("usage", {}),
+    )
