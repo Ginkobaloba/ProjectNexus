@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<!--
+  clients/web/index.html  -  Nexus thin client, web edition.
+
+  A single-page chat interface for the 4070 brainstem's /generate endpoint.
+  Built phone-first: it should feel right in a mobile browser, since that
+  is the Stage 0 Sprint 3 "visible win" - the fabric reachable from a
+  device in your hand, on or off the home network via Tailscale.
+
+  Scope boundaries (see the Sprint 3a brief):
+    - This file never touches brainstem internals. It speaks only the
+      public HTTP contract: POST /generate.
+    - Auth is Sprint 3b. There is an optional token field; when set it is
+      sent as an Authorization: Bearer header. No auth logic lives here.
+    - Server-side session semantics belong to the Sprint 2 memory agent.
+      This client does its half only: it generates a session id, persists
+      it in localStorage, and sends it as X-Session-Id on every request.
+
+  Why it ships with a companion proxy (clients/web/serve.py):
+    The brainstem does not send CORS headers, so a browser page loaded
+    from a different origin cannot POST to /generate with custom headers.
+    serve.py serves THIS file and reverse-proxies the brainstem endpoints
+    on the same origin, so the round trip just works without editing the
+    brainstem. By default this page makes same-origin relative requests
+    ("/generate"); the Settings panel lets you point at an absolute URL
+    instead if some future deployment serves the page from the brainstem
+    directly.
+
+  No build step, no dependencies. One file. Open it through serve.py.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#0d1117" />
+<title>Nexus</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --border: #2a313c;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #4c9eff;
+    --accent-dim: #1f3a52;
+    --user: #1f6feb;
+    --nexus: #21262d;
+    --error-bg: #3a1d1d;
+    --error-border: #6b2a2a;
+    --ok: #3fb950;
+    --down: #f85149;
+    --warn: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  /* ---- header ---- */
+  header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .brand h1 { font-size: 17px; font-weight: 600; letter-spacing: 0.3px; }
+  .brand .sub { font-size: 11px; color: var(--muted); }
+  .spacer { flex: 1; }
+  .status {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--muted);
+  }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--muted); flex: 0 0 auto;
+    transition: background 0.3s;
+  }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .dot.down { background: var(--down); box-shadow: 0 0 6px var(--down); }
+  .dot.warn { background: var(--warn); }
+  .icon-btn {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 36px; height: 36px;
+    border-radius: 9px;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:active { background: var(--accent-dim); }
+
+  /* ---- chat log ---- */
+  main {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px 14px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .msg { display: flex; flex-direction: column; max-width: 88%; }
+  .msg.user { align-self: flex-end; align-items: flex-end; }
+  .msg.nexus, .msg.error, .msg.system { align-self: flex-start; align-items: flex-start; }
+  .bubble {
+    padding: 10px 13px;
+    border-radius: 14px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    font-size: 15px;
+  }
+  .msg.user .bubble { background: var(--user); border-bottom-right-radius: 4px; }
+  .msg.nexus .bubble { background: var(--nexus); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .msg.system .bubble { background: transparent; border: 1px dashed var(--border); color: var(--muted); font-size: 13px; }
+  .msg.error .bubble { background: var(--error-bg); border: 1px solid var(--error-border); border-bottom-left-radius: 4px; }
+  .meta {
+    font-size: 10.5px;
+    color: var(--muted);
+    margin-top: 4px;
+    padding: 0 4px;
+  }
+  .typing .bubble { color: var(--muted); }
+  .typing .blink { animation: blink 1.1s steps(3, end) infinite; }
+  @keyframes blink { 0%, 20% { opacity: 0.2; } 50% { opacity: 1; } 100% { opacity: 0.2; } }
+
+  /* ---- composer ---- */
+  footer {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    padding: 10px 12px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+  .composer { display: flex; gap: 8px; align-items: flex-end; }
+  textarea {
+    flex: 1;
+    resize: none;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    padding: 11px 12px;
+    font: inherit;
+    font-size: 15px;
+    line-height: 1.4;
+    max-height: 140px;
+    min-height: 44px;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  .send {
+    flex: 0 0 auto;
+    background: var(--accent);
+    color: #06121f;
+    border: none;
+    border-radius: 11px;
+    height: 44px;
+    padding: 0 18px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .send:disabled { background: var(--accent-dim); color: var(--muted); cursor: default; }
+
+  /* ---- settings sheet ---- */
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: none;
+    z-index: 10;
+  }
+  .overlay.open { display: block; }
+  .sheet {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    padding: 18px 16px;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+    max-height: 88dvh;
+    overflow-y: auto;
+  }
+  .sheet h2 { font-size: 15px; margin-bottom: 14px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .field input, .field select {
+    width: 100%;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 10px 11px;
+    font: inherit;
+    font-size: 14px;
+  }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+  .field .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .session-line {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 9px;
+    word-break: break-all;
+  }
+  .btn-row { display: flex; gap: 10px; margin-top: 6px; }
+  .btn {
+    flex: 1;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 11px;
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .btn.primary { background: var(--accent); color: #06121f; border-color: var(--accent); font-weight: 600; }
+  .btn:active { filter: brightness(1.15); }
+  .upstream-line { font-size: 12px; color: var(--muted); }
+  .upstream-line b { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>Nexus</h1>
+    <span class="sub">thin client</span>
+  </div>
+  <div class="spacer"></div>
+  <div class="status" id="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">connecting</span>
+  </div>
+  <button class="icon-btn" id="settingsBtn" aria-label="Settings">&#9881;</button>
+</header>
+
+<main id="log" aria-live="polite"></main>
+
+<footer>
+  <div class="composer">
+    <textarea id="input" rows="1" placeholder="Message Nexus..." autocomplete="off"></textarea>
+    <button class="send" id="sendBtn">Send</button>
+  </div>
+</footer>
+
+<!-- settings bottom sheet -->
+<div class="overlay" id="overlay">
+  <div class="sheet" role="dialog" aria-label="Settings">
+    <h2>Settings</h2>
+
+    <div class="field">
+      <label for="apiBase">Brainstem connection</label>
+      <input id="apiBase" type="text" inputmode="url" placeholder="(same origin via proxy)" />
+      <div class="hint">
+        Leave blank to use the local proxy (recommended). The proxy's
+        <code>--target</code> flag chooses LAN vs Tailscale. Set an absolute
+        URL only if a deployment serves this page from the brainstem itself.
+      </div>
+      <div class="upstream-line" id="upstreamLine" style="margin-top:6px;"></div>
+    </div>
+
+    <div class="field">
+      <label for="authToken">Auth token (optional, Sprint 3b)</label>
+      <input id="authToken" type="password" placeholder="(none)" autocomplete="off" />
+      <div class="hint">Sent as an Authorization: Bearer header when set. Empty by default.</div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="maxTokens">Max tokens</label>
+        <input id="maxTokens" type="number" min="1" max="4096" />
+      </div>
+      <div class="field">
+        <label for="temperature">Temperature</label>
+        <input id="temperature" type="number" min="0" max="2" step="0.1" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="systemPrompt">System prompt (optional)</label>
+      <input id="systemPrompt" type="text" placeholder="(none)" />
+    </div>
+
+    <div class="field">
+      <label>Session id (sent as X-Session-Id)</label>
+      <div class="session-line" id="sessionLine">-</div>
+      <div class="btn-row">
+        <button class="btn" id="newSessionBtn">New session</button>
+        <button class="btn" id="clearChatBtn">Clear chat</button>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn primary" id="saveBtn">Save &amp; close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ----------------------------------------------------------------------
+// Persistence. localStorage keys are namespaced so this client is a tidy
+// guest in any browser. The session id is the important one: persisting it
+// is this client's half of the session contract with the Sprint 2 memory
+// work, so a phone keeps the same conversation thread across reloads.
+// ----------------------------------------------------------------------
+const LS = {
+  apiBase: "nexus.apiBase",
+  authToken: "nexus.authToken",
+  sessionId: "nexus.sessionId",
+  maxTokens: "nexus.maxTokens",
+  temperature: "nexus.temperature",
+  systemPrompt: "nexus.systemPrompt",
+};
+
+function lsGet(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v;
+  } catch (e) {
+    return fallback;
+  }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* private mode: in-memory only */ }
+}
+
+// A v4-ish uuid. crypto.randomUUID is available in all modern mobile
+// browsers; the manual path is a defensive fallback for old webviews.
+function newSessionId() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+function getSessionId() {
+  let id = lsGet(LS.sessionId, "");
+  if (!id) {
+    id = newSessionId();
+    lsSet(LS.sessionId, id);
+  }
+  return id;
+}
+
+// ----------------------------------------------------------------------
+// Config state, hydrated from localStorage with sensible defaults.
+// ----------------------------------------------------------------------
+const state = {
+  apiBase: lsGet(LS.apiBase, ""),               // "" => same-origin via proxy
+  authToken: lsGet(LS.authToken, ""),           // "" => no Authorization header
+  sessionId: getSessionId(),
+  maxTokens: parseInt(lsGet(LS.maxTokens, "512"), 10) || 512,
+  temperature: parseFloat(lsGet(LS.temperature, "0.7")),
+  systemPrompt: lsGet(LS.systemPrompt, ""),
+  busy: false,
+};
+if (isNaN(state.temperature)) state.temperature = 0.7;
+
+// Build an endpoint URL. Empty apiBase => relative path => same origin as
+// whatever served this page (the proxy). A set apiBase => absolute.
+function endpoint(path) {
+  const base = (state.apiBase || "").replace(/\/+$/, "");
+  return base ? base + path : path;
+}
+
+function authHeaders() {
+  // X-Session-Id always. Authorization only when there is a token to send;
+  // an empty Authorization header would just be noise. The hook is here
+  // and ready for Sprint 3b.
+  const h = {
+    "Content-Type": "application/json",
+    "X-Session-Id": state.sessionId,
+  };
+  if (state.authToken) h["Authorization"] = "Bearer " + state.authToken;
+  return h;
+}
+
+// ----------------------------------------------------------------------
+// DOM helpers
+// ----------------------------------------------------------------------
+const log = document.getElementById("log");
+const input = document.getElementById("input");
+const sendBtn = document.getElementById("sendBtn");
+
+function scrollToBottom() {
+  // rAF so layout settles (e.g. textarea growth) before we measure.
+  requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
+}
+
+function addMessage(kind, text, meta) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + kind;
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  if (meta) {
+    const m = document.createElement("div");
+    m.className = "meta";
+    m.textContent = meta;
+    wrap.appendChild(m);
+  }
+  log.appendChild(wrap);
+  scrollToBottom();
+  return wrap;
+}
+
+function addTyping() {
+  const wrap = document.createElement("div");
+  wrap.className = "msg nexus typing";
+  wrap.innerHTML = '<div class="bubble">thinking<span class="blink">...</span></div>';
+  log.appendChild(wrap);
+  scrollToBottom();
+  return wrap;
+}
+
+// ----------------------------------------------------------------------
+// The round trip. POST /generate, render the reply.
+// ----------------------------------------------------------------------
+async function sendPrompt(text) {
+  if (state.busy) return;
+  state.busy = true;
+  sendBtn.disabled = true;
+
+  addMessage("user", text);
+  const typing = addTyping();
+
+  const body = {
+    prompt: text,
+    max_tokens: state.maxTokens,
+    temperature: state.temperature,
+  };
+  if (state.systemPrompt) body.system = state.systemPrompt;
+
+  const t0 = performance.now();
+  try {
+    const resp = await fetch(endpoint("/generate"), {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(body),
+    });
+    const clientMs = performance.now() - t0;
+
+    let payload = null;
+    let raw = "";
+    try { raw = await resp.text(); payload = JSON.parse(raw); } catch (e) { /* non-JSON */ }
+
+    typing.remove();
+
+    if (!resp.ok) {
+      // FastAPI errors come back as {"detail": ...}. A 502 means the
+      // brainstem is up but the Cortex round trip failed.
+      const detail = (payload && payload.detail) ? payload.detail : (raw || resp.statusText);
+      const prefix = resp.status === 502
+        ? "Brainstem reached, but the Cortex round trip failed (502): "
+        : "Brainstem returned HTTP " + resp.status + ": ";
+      addMessage("error", prefix + detail);
+      return;
+    }
+    if (!payload || typeof payload.text !== "string") {
+      addMessage("error", "Unexpected response shape from /generate.");
+      return;
+    }
+
+    const usage = payload.usage || {};
+    const tokens = usage.completion_tokens || 0;
+    const tps = (clientMs > 0 && tokens) ? (tokens / (clientMs / 1000)) : 0;
+    const meta =
+      payload.model +
+      "  |  " + clientMs.toFixed(0) + " ms round trip" +
+      "  |  " + tokens + " tokens" +
+      "  |  " + tps.toFixed(1) + " tok/s";
+    addMessage("nexus", payload.text, meta);
+  } catch (err) {
+    typing.remove();
+    // A bare network failure here is usually the proxy not running, the
+    // brainstem being down, or (if an absolute apiBase is set) CORS.
+    addMessage(
+      "error",
+      "Could not reach the brainstem: " + (err && err.message ? err.message : err) +
+      "\n\nCheck that the proxy (serve.py) is running, or that the configured " +
+      "brainstem address is reachable from this device."
+    );
+  } finally {
+    state.busy = false;
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+// ----------------------------------------------------------------------
+// Composer behaviour
+// ----------------------------------------------------------------------
+function autoGrow() {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 140) + "px";
+}
+function submit() {
+  const text = input.value.trim();
+  if (!text || state.busy) return;
+  input.value = "";
+  autoGrow();
+  sendPrompt(text);
+}
+
+input.addEventListener("input", autoGrow);
+input.addEventListener("keydown", function (e) {
+  // Enter sends; Shift+Enter is a newline. On touch keyboards without a
+  // shift, the Send button is always there.
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    submit();
+  }
+});
+sendBtn.addEventListener("click", submit);
+
+// ----------------------------------------------------------------------
+// Connection status. Polls /fabric/status through the same path the chat
+// uses, so the dot reflects the real reachability of the round trip.
+// ----------------------------------------------------------------------
+const statusDot = document.getElementById("statusDot");
+const statusText = document.getElementById("statusText");
+
+function setStatus(cls, text) {
+  statusDot.className = "dot " + cls;
+  statusText.textContent = text;
+}
+
+async function pollStatus() {
+  try {
+    const resp = await fetch(endpoint("/fabric/status"), { method: "GET" });
+    if (!resp.ok) { setStatus("warn", "brainstem " + resp.status); return; }
+    const data = await resp.json();
+    const cortex = data.nodes && data.nodes.cortex_4090;
+    if (cortex && cortex.status === "up") {
+      setStatus("ok", "fabric up");
+    } else {
+      setStatus("warn", "cortex down");
+    }
+  } catch (e) {
+    setStatus("down", "unreachable");
+  }
+}
+
+// One-time: ask the proxy which brainstem it is fronting, purely so the
+// Settings panel can show the human which box they are talking to. If the
+// page is served some other way this 404s and we just stay quiet.
+async function loadUpstreamInfo() {
+  const el = document.getElementById("upstreamLine");
+  try {
+    const resp = await fetch(endpoint("/client/info"), { method: "GET" });
+    if (!resp.ok) { el.textContent = ""; return; }
+    const info = await resp.json();
+    el.innerHTML = "Proxy target: <b>" + (info.target || "?") +
+                   "</b> &rarr; " + (info.upstream || "?");
+  } catch (e) {
+    el.textContent = "";
+  }
+}
+
+// ----------------------------------------------------------------------
+// Settings sheet
+// ----------------------------------------------------------------------
+const overlay = document.getElementById("overlay");
+const els = {
+  apiBase: document.getElementById("apiBase"),
+  authToken: document.getElementById("authToken"),
+  maxTokens: document.getElementById("maxTokens"),
+  temperature: document.getElementById("temperature"),
+  systemPrompt: document.getElementById("systemPrompt"),
+  sessionLine: document.getElementById("sessionLine"),
+};
+
+function openSettings() {
+  els.apiBase.value = state.apiBase;
+  els.authToken.value = state.authToken;
+  els.maxTokens.value = state.maxTokens;
+  els.temperature.value = state.temperature;
+  els.systemPrompt.value = state.systemPrompt;
+  els.sessionLine.textContent = state.sessionId;
+  loadUpstreamInfo();
+  overlay.classList.add("open");
+}
+function closeSettings() { overlay.classList.remove("open"); }
+
+function saveSettings() {
+  state.apiBase = els.apiBase.value.trim();
+  state.authToken = els.authToken.value;
+  state.maxTokens = parseInt(els.maxTokens.value, 10) || 512;
+  let t = parseFloat(els.temperature.value);
+  state.temperature = isNaN(t) ? 0.7 : t;
+  state.systemPrompt = els.systemPrompt.value.trim();
+
+  lsSet(LS.apiBase, state.apiBase);
+  lsSet(LS.authToken, state.authToken);
+  lsSet(LS.maxTokens, String(state.maxTokens));
+  lsSet(LS.temperature, String(state.temperature));
+  lsSet(LS.systemPrompt, state.systemPrompt);
+
+  closeSettings();
+  pollStatus();
+}
+
+document.getElementById("settingsBtn").addEventListener("click", openSettings);
+document.getElementById("saveBtn").addEventListener("click", saveSettings);
+overlay.addEventListener("click", function (e) {
+  if (e.target === overlay) closeSettings();
+});
+document.getElementById("newSessionBtn").addEventListener("click", function () {
+  state.sessionId = newSessionId();
+  lsSet(LS.sessionId, state.sessionId);
+  els.sessionLine.textContent = state.sessionId;
+  addMessage("system", "Started a new session: " + state.sessionId);
+});
+document.getElementById("clearChatBtn").addEventListener("click", function () {
+  log.innerHTML = "";
+  closeSettings();
+  greet();
+});
+
+// ----------------------------------------------------------------------
+// Boot
+// ----------------------------------------------------------------------
+function greet() {
+  addMessage(
+    "system",
+    "Nexus thin client. Messages go to the 4070 brainstem and come back " +
+    "with text generated by the 4090 Cortex. Session " +
+    state.sessionId.slice(0, 8) + " active. Tap the gear to configure."
+  );
+}
+
+greet();
+autoGrow();
+pollStatus();
+setInterval(pollStatus, 15000);
+input.focus();
+</script>
+</body>
+</html>

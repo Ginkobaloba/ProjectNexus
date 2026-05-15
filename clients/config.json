@@ -1,0 +1,12 @@
+{
+  "targets": {
+    "lan": "http://<REDACTED_LAN_IP>:5001",
+    "tailscale": "http://<REDACTED_TAILSCALE_IP>:5001"
+  },
+  "default_target": "tailscale",
+  "auth_token": "",
+  "generation": {
+    "max_tokens": 512,
+    "temperature": 0.7
+  }
+}
