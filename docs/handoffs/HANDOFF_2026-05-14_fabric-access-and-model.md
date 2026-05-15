@@ -1,5 +1,7 @@
 ﻿# Handoff: 2026-05-14 â€” Fabric access established, model staged
 
+> **Superseded by [HANDOFF_2026-05-15_containerized-stack-and-harness.md](./HANDOFF_2026-05-15_containerized-stack-and-harness.md).** Kept for history. See the current handoff for live state.
+
 This handoff compacts a long working session. A fresh session should
 be able to pick up from here without the back-and-forth context.
 
