@@ -1,0 +1,12 @@
+{
+  "targets": {
+    "lan": "http://192.168.1.251:5001",
+    "tailscale": "http://100.89.210.52:5001"
+  },
+  "default_target": "tailscale",
+  "auth_token": "",
+  "generation": {
+    "max_tokens": 512,
+    "temperature": 0.7
+  }
+}
