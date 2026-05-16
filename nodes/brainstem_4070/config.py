@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     # --Nas-- Memory
     nas_url: str = "http://nas_memory:5002"
 
+    # --Embedder-- separate container that owns the embedding model and
+    # the Chroma `memory` collection. Brainstem talks to it over the
+    # compose network for write-on-turn and retrieve-before-generate.
+    embedder_url: str = "http://embedder_4070:5003"
+    embedder_timeout: float = 30.0
+
     # --Cortex-- 4090 heavy-inference peer (vLLM, OpenAI-compatible API).
     # LAN address of DREWSPC. Override with BRAINSTEM_CORTEX_URL if needed.
     cortex_url: str = "http://192.168.1.140:8000"
