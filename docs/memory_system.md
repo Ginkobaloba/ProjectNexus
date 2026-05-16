@@ -1,6 +1,6 @@
 # Memory system
 
-Status: Sprint 2 in flight. Chunk A (embedder + write-on-turn) landed.
+Status: Sprint 2 in flight. Chunks A (embedder + write-on-turn) and B (retrieve-before-generate + latency probes) landed.
 
 ## Shape
 
@@ -85,9 +85,39 @@ Document id format: `{session_id}:{turn_idx}:{chunk_idx}`. Body is the chunk tex
 
 Per-session turn index is held in a process-local dict on the brainstem (`_turn_idx_by_session`). Phase 0 single-process is fine. A service restart resets the counter; the thin client persists `X-Session-Id` across restarts, so post-restart turns start at 0 again, which the next session over the same `X-Session-Id` will see as a fresh turn series. Surfaced here so we remember; we will fix this in Stage 1 when the brainstem gets a real persistence layer (or trivially earlier by snapshotting `_turn_idx_by_session` to disk).
 
-## Retrieval (Chunk B, in flight)
+## Retrieval (Chunk B)
 
-Top-k=5 against the `memory` collection, embedded with the same model, no default session filter. Brainstem will inject the retrieved turns into the Cortex call as a system message, plus extend the metric harness with `embed_latency_ms` and `retrieve_latency_ms` per turn. See `experiment-1-sprint-plan.md`.
+Top-k=5 against the `memory` collection at the start of every `/generate`, embedded with the same model the writes use. No default session filter, because the Sprint 2 done-criterion is cross-session recall.
+
+Injection mechanism: the retrieved matches are formatted into a short block and merged into the `system` prompt sent to Cortex. If the caller already passed a `system` prompt, the retrieved block is appended after it so the caller's instruction stays on top. The user's prompt is never modified, so the model sees a clean user intent and the retrieved context as instruction-like background.
+
+The block format:
+
+```
+You have access to prior turns from this user's memory. Use any that are actually relevant; ignore the rest.
+
+--- prior turn 1 (session <short id>, turn <idx>, <ts>, distance=<d>) ---
+<chunk text>
+
+--- prior turn 2 ... ---
+<chunk text>
+```
+
+Distance is included so we can debug retrieval quality by reading the metric log without a separate trace.
+
+Failure mode: if the embedder service is unreachable for retrieval, the brainstem logs a warning and continues to Cortex with the caller's original system prompt. Generation does not fail because retrieval did.
+
+## Metric harness (Chunks A + B)
+
+The Phase 0 brainstem metric record gained five fields in Sprint 2:
+
+- `embed_latency_ms` (Chunk A) - wall time for the post-Cortex `memory_write` call
+- `retrieve_latency_ms` (Chunk B) - wall time for the pre-Cortex `memory_query` call
+- `retrieved_count` (Chunk B) - number of matches returned by the embedder
+- `retrieved_ids` (Chunk B) - the chunk ids returned, for offline analysis
+- `session_id`, `turn_idx`, `memory_written` (Chunk A) - per-turn attribution
+
+`brainstem_overhead_ms` is now computed as `total_ms - cortex_roundtrip_ms - embed_latency_ms - retrieve_latency_ms` so the decomposition is clean: total = cortex + embed + retrieve + brainstem-side overhead.
 
 ## Volumes
 

@@ -201,20 +201,61 @@ def _resolve_session_id(header_value: Optional[str]) -> str:
     return header_value.strip()
 
 
+# How many retrieved turns we inject and the wrapper format. Both are
+# tweakable without touching the surrounding logic.
+RETRIEVAL_K = 5
+
+
+def _format_retrieved_context(matches: List[Dict[str, Any]]) -> str:
+    """Format the top-k matches into a single system-context block. We
+    keep this short and structured so the model can ignore irrelevant
+    bits cleanly. Distance is shown so we can debug retrieval quality
+    by reading the logs."""
+    if not matches:
+        return ""
+    lines: List[str] = [
+        "You have access to prior turns from this user's memory. Use any "
+        "that are actually relevant; ignore the rest.",
+        "",
+    ]
+    for i, m in enumerate(matches, start=1):
+        meta = m.get("metadata") or {}
+        ts = meta.get("ts", "")
+        sid = (meta.get("session_id", "") or "")[:8]
+        turn = meta.get("turn_idx", "?")
+        dist = m.get("distance")
+        dist_str = f", distance={dist:.3f}" if isinstance(dist, (float, int)) else ""
+        lines.append(f"--- prior turn {i} (session {sid}, turn {turn}, {ts}{dist_str}) ---")
+        lines.append((m.get("text") or "").strip())
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _merge_system(caller_system: Optional[str], retrieved_block: str) -> Optional[str]:
+    """If the caller already provided a system prompt, append the
+    retrieved-context block after it. Otherwise the retrieved-context
+    block IS the system prompt. Either way we keep the caller's intent
+    on top so they can pin a persona / instruction over the memory."""
+    if not retrieved_block:
+        return caller_system
+    if caller_system and caller_system.strip():
+        return f"{caller_system.strip()}\n\n{retrieved_block}"
+    return retrieved_block
+
+
 @app.post("/generate", response_model=GenerateResponse)
 def generate(
     req: GenerateRequest,
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
 ):
-    """Relay a prompt to the 4090 Cortex, write the completed turn to
-    the embedder's `memory` collection synchronously, return the
-    generated text.
+    """Relay a prompt to the 4090 Cortex, retrieve-before-generate
+    against the `memory` collection, write the completed turn back, and
+    return the generated text.
 
-    Sprint 2 changes from the previous version:
-      - X-Session-Id is read off the request and required.
-      - Each completed turn is embedded + chunked + written to Chroma
-        before returning. Synchronous on purpose so we surface real
-        write-on-turn latency in the metric harness.
+    Sprint 2 Chunk B added the retrieval leg in front of the Cortex call.
+    The retrieved turns are merged into the system prompt sent to Cortex.
+    Retrieval is NOT scoped to the current session by default, which is
+    the whole point of the cross-session done-criterion.
     """
     session_id = _resolve_session_id(x_session_id)
 
@@ -223,11 +264,34 @@ def generate(
     if req.system:
         payload_bytes += len(req.system.encode("utf-8"))
 
+    # --- Sprint 2 retrieve-before-generate ------------------------
+    retrieve_latency_ms = 0.0
+    retrieved_count = 0
+    retrieved_ids: List[str] = []
+    effective_system = req.system
+    t_retrieve_start = now_ns()
+    try:
+        rres = embedder.memory_query(
+            session_id=session_id,
+            query=req.prompt,
+            k=RETRIEVAL_K,
+        )
+        matches = rres.get("matches", []) or []
+        retrieved_count = len(matches)
+        retrieved_ids = [m.get("id", "") for m in matches]
+        retrieved_block = _format_retrieved_context(matches)
+        effective_system = _merge_system(req.system, retrieved_block)
+    except EmbedderError as exc:
+        # Retrieval failure should not block generation. Log it and
+        # continue with the caller's original system prompt.
+        logger.warning("memory_query failed (continuing without context): %s", exc)
+    retrieve_latency_ms = (now_ns() - t_retrieve_start) / 1e6
+
     t_pre = now_ns()
     try:
         result = cortex.generate(
             prompt=req.prompt,
-            system=req.system,
+            system=effective_system,
             max_tokens=req.max_tokens,
             temperature=req.temperature,
         )
@@ -267,7 +331,9 @@ def generate(
     t_egress = now_ns()
     cortex_roundtrip_ms = (t_post - t_pre) / 1e6
     total_ms = (t_egress - t_ingress) / 1e6
-    brainstem_overhead_ms = total_ms - cortex_roundtrip_ms - embed_latency_ms
+    brainstem_overhead_ms = (
+        total_ms - cortex_roundtrip_ms - embed_latency_ms - retrieve_latency_ms
+    )
 
     usage = (result or {}).get("usage", {}) or {}
     completion_tokens = usage.get("completion_tokens", 0) or 0
@@ -291,7 +357,9 @@ def generate(
             "cortex_roundtrip_ms": round(cortex_roundtrip_ms, 3),
             "brainstem_overhead_ms": round(brainstem_overhead_ms, 3),
             "embed_latency_ms": round(embed_latency_ms, 3),
-            "retrieve_latency_ms": 0.0,  # populated in Chunk B
+            "retrieve_latency_ms": round(retrieve_latency_ms, 3),
+            "retrieved_count": retrieved_count,
+            "retrieved_ids": retrieved_ids,
             "prompt_tokens": usage.get("prompt_tokens", 0) or 0,
             "completion_tokens": completion_tokens,
             "tokens_per_s": round(tokens_per_s, 2),
@@ -315,8 +383,10 @@ def generate(
         raise HTTPException(status_code=502, detail=f"Cortex unreachable: {err}")
 
     logger.info(
-        "generate ok: session=%s turn=%d total=%.1fms cortex=%.1fms embed=%.1fms",
-        session_id, turn_idx, total_ms, cortex_roundtrip_ms, embed_latency_ms,
+        "generate ok: session=%s turn=%d total=%.1fms cortex=%.1fms "
+        "retrieve=%.1fms embed=%.1fms retrieved=%d",
+        session_id, turn_idx, total_ms, cortex_roundtrip_ms,
+        retrieve_latency_ms, embed_latency_ms, retrieved_count,
     )
     return GenerateResponse(
         text=result["text"],
