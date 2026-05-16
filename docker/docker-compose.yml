@@ -14,13 +14,35 @@ services:
       - BRAINSTEM_CORTEX_URL=http://192.168.1.140:8000
       # NAS memory service, reached by compose-network DNS.
       - BRAINSTEM_NAS_URL=http://nas_memory:5002
+      # Embedder service, reached by compose-network DNS.
+      - BRAINSTEM_EMBEDDER_URL=http://embedder_4070:5003
       # Phase 0 metric harness: which fabric components are live this run.
-      - NEXUS_BUILD_STATE=brainstem+cortex+nas
+      - NEXUS_BUILD_STATE=brainstem+cortex+nas+embedder
     volumes:
       # Phase 0 metric harness JSONL sink, persisted on the 4070 SSD.
       - ../data/metrics:/data/metrics
     depends_on:
       - nas
+      - embedder
+    networks:
+      - nexusnet
+
+  embedder:
+    build:
+      context: ..
+      dockerfile: docker/embedder.Dockerfile
+    container_name: embedder_4070
+    restart: unless-stopped
+    ports:
+      - "5003:5003"
+    environment:
+      - EMBEDDER_DEVICE=cpu
+      - EMBEDDER_CHROMA_PERSIST_DIR=/chroma
+      - EMBEDDER_CHROMA_COLLECTION=memory
+    volumes:
+      # Persistent Chroma collection. Named volume so it survives
+      # container rebuilds and is the unit of backup / wipe.
+      - chroma_data:/chroma
     networks:
       - nexusnet
 
@@ -36,6 +58,10 @@ services:
       - ../data/nas:/data/nas
     networks:
       - nexusnet
+
+
+volumes:
+  chroma_data:
 
 
 networks:
