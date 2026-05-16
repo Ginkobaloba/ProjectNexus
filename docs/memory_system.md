@@ -1,6 +1,6 @@
 # Memory system
 
-Status: Sprint 2 in flight. Chunks A (embedder + write-on-turn) and B (retrieve-before-generate + latency probes) landed.
+Status: Sprint 2 complete. Chunks A (embedder + write-on-turn), B (retrieve-before-generate + latency probes), and C (cross-session recall test) all shipped. Done-criterion verified: see `docs/handoffs/HANDOFF_2026-05-16_sprint-2-complete.md` for the test result and the latency numbers.
 
 ## Shape
 
