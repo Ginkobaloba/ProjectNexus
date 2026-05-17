@@ -17,12 +17,17 @@ RUN pip install --no-cache-dir \
     "uvicorn[standard]" \
     pydantic \
     pydantic-settings \
-    requests
+    requests \
+    argon2-cffi
 
 # Copy code last so source changes only rebuild from here down.
 COPY core /app/core
 COPY bench /app/bench
 COPY nodes/brainstem_4070 /app/brainstem_4070
+# Sprint 3b: token CLI runs from inside the container so the plaintext
+# token never crosses the network. `docker compose exec brainstem
+# python scripts/create_token.py --name <client>`.
+COPY scripts /app/scripts
 
 ENV PYTHONPATH="/app"
 
