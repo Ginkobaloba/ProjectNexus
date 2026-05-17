@@ -7,12 +7,13 @@ import logging
 import uuid
 
 import requests
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from core.nas_client import NASClient
 from brainstem_4070.config import settings
+from brainstem_4070.auth import configure_store, require_token, TokenEntry
 from brainstem_4070.embedder_client import EmbedderClient, EmbedderError
 from brainstem_4070.stm_buffer import STMItem, stm_buffer
 from brainstem_4070.filter import basic_validation
@@ -40,6 +41,13 @@ cortex = CortexClient(
     health_timeout=settings.cortex_health_timeout,
 )
 embedder = EmbedderClient(settings.embedder_url, timeout=settings.embedder_timeout)
+
+# Sprint 3b: load the bearer-token store at process start. Configured
+# path is a docker named volume in production; in dev / tests it gets
+# overridden via BRAINSTEM_TOKEN_STORE_PATH or configure_store() before
+# spinning the app up. An empty store means every authenticated endpoint
+# 401s, which is the right failure mode for a fresh deploy.
+configure_store(settings.token_store_path)
 
 # Phase 0 metric harness. The JSONL file is the persistent data layer;
 # the in-process ring buffer is what the live dashboard reads each poll.
@@ -116,7 +124,7 @@ def health_check():
 
 
 @app.post("/embed")
-def embed(req: EmbedRequest):
+def embed(req: EmbedRequest, _auth: TokenEntry = Depends(require_token)):
     """Legacy embedding endpoint. Now a thin proxy through the embedder
     service. Also writes a semantic memory to NAS for each input text to
     preserve the prior side effect for the NAS-based long-term memory
@@ -151,7 +159,7 @@ def embed(req: EmbedRequest):
 
 
 @app.post("/stm/write", response_model=STMWriteResponse)
-def stm_write(req: STMWriteRequest):
+def stm_write(req: STMWriteRequest, _auth: TokenEntry = Depends(require_token)):
     payload = {"text": req.text, "metadata": req.metadata or {}}
 
     if not basic_validation(payload):
@@ -247,6 +255,7 @@ def _merge_system(caller_system: Optional[str], retrieved_block: str) -> Optiona
 def generate(
     req: GenerateRequest,
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
+    auth: TokenEntry = Depends(require_token),
 ):
     """Relay a prompt to the 4090 Cortex, retrieve-before-generate
     against the `memory` collection, write the completed turn back, and
@@ -256,6 +265,10 @@ def generate(
     The retrieved turns are merged into the system prompt sent to Cortex.
     Retrieval is NOT scoped to the current session by default, which is
     the whole point of the cross-session done-criterion.
+
+    Sprint 3b: auth is required. The validated token entry is available
+    as `auth`; its name is logged and written to the metric record for
+    per-client attribution.
     """
     session_id = _resolve_session_id(x_session_id)
 
@@ -369,6 +382,7 @@ def generate(
             "turn_idx": turn_idx if memory_written else None,
             "memory_written": memory_written,
             "memory_chunks": memory_chunks,
+            "token_name": auth.name,
             "error": err,
         },
     )
@@ -383,9 +397,9 @@ def generate(
         raise HTTPException(status_code=502, detail=f"Cortex unreachable: {err}")
 
     logger.info(
-        "generate ok: session=%s turn=%d total=%.1fms cortex=%.1fms "
-        "retrieve=%.1fms embed=%.1fms retrieved=%d",
-        session_id, turn_idx, total_ms, cortex_roundtrip_ms,
+        "generate ok: token=%s session=%s turn=%d total=%.1fms "
+        "cortex=%.1fms retrieve=%.1fms embed=%.1fms retrieved=%d",
+        auth.name, session_id, turn_idx, total_ms, cortex_roundtrip_ms,
         retrieve_latency_ms, embed_latency_ms, retrieved_count,
     )
     return GenerateResponse(
@@ -519,17 +533,35 @@ def dashboard():
 
 @app.get("/")
 def root():
-    """Pointer to the human-facing dashboard and the machine endpoints."""
+    """Pointer to the human-facing dashboard and the machine endpoints.
+
+    Sprint 3b: endpoints requiring `Authorization: Bearer <token>` are
+    flagged here so a client poking the root URL can see what to send.
+    Status endpoints stay anonymous so the dashboard and any external
+    uptime check can poll without a token.
+    """
     return {
         "service": "Nexus Brainstem (4070)",
         "dashboard": "/dashboard",
-        "endpoints": [
-            "/health",
-            "/cortex/health",
-            "/embedder/health",
-            "/fabric/status",
-            "/generate",
-            "/embed",
-            "/stm/write",
-        ],
+        "auth": {
+            "scheme": "Bearer",
+            "header": "Authorization",
+            "doc": "/docs#operations-tag-default for endpoint shape; "
+                   "docs/auth_middleware.md for the design.",
+        },
+        "endpoints": {
+            "anonymous": [
+                "/",
+                "/health",
+                "/cortex/health",
+                "/embedder/health",
+                "/fabric/status",
+                "/dashboard",
+            ],
+            "authenticated": [
+                "/generate",
+                "/embed",
+                "/stm/write",
+            ],
+        },
     }

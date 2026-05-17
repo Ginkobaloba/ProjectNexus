@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     metrics_path: str = "/data/metrics/brainstem_metrics.jsonl"
     metrics_window: int = 200
 
+    # --Auth-- Sprint 3b token store.
+    # JSON file with hashed bearer tokens (one per client). Lives on the
+    # `auth_data` docker named volume so it survives container restarts.
+    # See docs/auth_middleware.md for the schema and the decision log.
+    token_store_path: str = "/data/auth/tokens.json"
+
     # Service
     host: str = "0.0.0.0"
     port: int = 5001

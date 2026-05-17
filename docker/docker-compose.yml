@@ -16,11 +16,18 @@ services:
       - BRAINSTEM_NAS_URL=http://nas_memory:5002
       # Embedder service, reached by compose-network DNS.
       - BRAINSTEM_EMBEDDER_URL=http://embedder_4070:5003
+      # Sprint 3b: bearer-token store for the auth middleware. File lives
+      # on the auth_data named volume; mint tokens via
+      # `docker compose exec brainstem python scripts/create_token.py --name <client>`.
+      - BRAINSTEM_TOKEN_STORE_PATH=/data/auth/tokens.json
       # Phase 0 metric harness: which fabric components are live this run.
       - NEXUS_BUILD_STATE=brainstem+cortex+nas+embedder
     volumes:
       # Phase 0 metric harness JSONL sink, persisted on the 4070 SSD.
       - ../data/metrics:/data/metrics
+      # Sprint 3b: hashed token registry. Named volume so it survives
+      # container rebuilds and is the unit of backup / wipe.
+      - auth_data:/data/auth
     depends_on:
       - nas
       - embedder
@@ -62,6 +69,10 @@ services:
 
 volumes:
   chroma_data:
+  # Sprint 3b: hashed bearer-token store for the brainstem auth
+  # middleware. Survives container restart and rebuild. Backed up by
+  # backing up the docker volume.
+  auth_data:
 
 
 networks:
