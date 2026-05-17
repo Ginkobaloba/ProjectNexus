@@ -35,9 +35,15 @@ On every request both clients also send:
   work owns what the server does with it; the client just mints it,
   keeps it stable across runs, and sends it. Nothing here invents
   server-side session semantics.
-- `Authorization: Bearer <token>` - **only when a token is configured.**
-  Auth is Sprint 3b. The hook is wired and tested, the token is optional
-  and empty by default, and no auth logic lives in these clients.
+- `Authorization: Bearer <token>` - **required as of Sprint 3b on
+  `/generate`, `/embed`, and `/stm/write`.** Mint a token on the 4070
+  with `docker compose exec brainstem python scripts/create_token.py
+  --name <client>`, then paste it into the client's config (`auth_token`
+  field), the `NEXUS_AUTH_TOKEN` env var, the CLI's `--token` flag, or
+  the web client's settings panel. Without a token these endpoints
+  return 401. Status endpoints (`/health`, `/cortex/health`,
+  `/embedder/health`, `/fabric/status`, `/dashboard`) stay anonymous for
+  monitoring. See `docs/auth_middleware.md` for the design.
 
 ## Configuration
 

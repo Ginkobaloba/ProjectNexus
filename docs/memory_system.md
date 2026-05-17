@@ -123,5 +123,10 @@ The Phase 0 brainstem metric record gained five fields in Sprint 2:
 
 - `chroma_data` (docker named volume) -> mounted at `/chroma` in `embedder_4070`. This is the unit of backup and the unit of "wipe to start over."
 - `../data/metrics` (host bind mount on the 4070) -> mounted at `/data/metrics` in `brainstem_4070`. JSONL metric records.
+- `auth_data` (docker named volume, added Sprint 3b) -> mounted at `/data/auth` in `brainstem_4070`. Hashed bearer-token registry. Survives container restarts and rebuilds.
 
-Chunk C will confirm the metric log is on a named volume and run the cross-session recall test against this stack.
+Chunk C confirmed the cross-session recall test against this stack. Sprint 3b layered bearer-token auth on top without altering the embedder or chroma paths; the recall behavior is unchanged by construction.
+
+## Auth (Sprint 3b)
+
+`/generate`, `/embed`, and `/stm/write` now require `Authorization: Bearer <token>`. Status endpoints (`/health`, `/cortex/health`, `/embedder/health`, `/fabric/status`, `/dashboard`, `/`) stay anonymous. Tokens are minted via `python scripts/create_token.py --name <client>` inside the brainstem container; the plaintext token is printed once and only the argon2id (or scrypt fallback) hash lives on disk. Per-request token attribution is logged and written to the metric record under `token_name`. See `docs/auth_middleware.md` for the full design and decision log.

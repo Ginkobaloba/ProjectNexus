@@ -16,8 +16,9 @@ Why this exists (cognitive-system framing):
 Scope boundaries (deliberate, see the Sprint 3a brief):
     - This client never touches brainstem internals. It only speaks the
       public HTTP contract.
-    - Auth is Sprint 3b. This client can attach an Authorization header,
-      but the token is optional and empty by default. No auth logic here.
+    - Auth (Sprint 3b): the brainstem requires a bearer token on
+      /generate. This client attaches one from --token, NEXUS_AUTH_TOKEN,
+      or the shared config. No auth logic lives here, just the header.
     - Server-side session semantics are owned by the Sprint 2 memory agent.
       This client only does its half of the contract: generate a session
       id, persist it, and send it as the X-Session-Id header on every
@@ -148,11 +149,12 @@ def resolve_base_url(args: argparse.Namespace, cfg: Dict[str, Any]) -> str:
 
 
 def resolve_token(args: argparse.Namespace, cfg: Dict[str, Any]) -> str:
-    """Decide the auth token. Currently optional and empty by default.
+    """Decide the auth token. Required as of Sprint 3b for /generate.
 
     Precedence: --token, then the NEXUS_AUTH_TOKEN env var, then the config.
-    Auth itself is Sprint 3b. All this client does is decide whether it has
-    a token to attach.
+    A missing token will not crash the client; it just means the brainstem
+    will return 401. We surface that on the round trip instead of trying to
+    guess locally.
     """
     if args.token is not None:
         return args.token
@@ -166,11 +168,11 @@ def build_headers(session_id: str, token: str) -> Dict[str, str]:
     """Assemble the request headers.
 
     X-Session-Id goes on every request, always. That is the simple, explicit
-    session contract the Sprint 2 agent is making the server honor.
+    session contract the Sprint 2 agent made the server honor.
 
-    Authorization is only attached when there is a non-empty token. Sending
-    an empty Authorization header would be noise; omitting it keeps the
-    request clean today and the hook is right here for Sprint 3b.
+    Authorization is only attached when there is a non-empty token. The
+    brainstem requires it on /generate as of Sprint 3b, so an empty token
+    will produce a 401 from the server, which we surface to the user.
     """
     headers = {
         "Content-Type": "application/json",
@@ -217,9 +219,17 @@ def call_generate(
         with urllib.request.urlopen(request, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        # FastAPI errors come back as JSON {"detail": ...}. A 502 here means
-        # the brainstem is up but the Cortex round trip failed.
+        # FastAPI errors come back as JSON {"detail": ...}. A 401 here
+        # means we have no token or the wrong one. A 502 means the
+        # brainstem is up but the Cortex round trip failed.
         detail = _extract_http_error_detail(exc)
+        if exc.code == 401:
+            raise BrainstemError(
+                f"brainstem rejected the request (401 {detail}). "
+                f"Set --token, NEXUS_AUTH_TOKEN, or auth_token in config.json. "
+                f"Mint one on the 4070 with "
+                f"`docker compose exec brainstem python scripts/create_token.py --name <client>`."
+            ) from exc
         if exc.code == 502:
             raise BrainstemError(
                 f"brainstem reached, but Cortex round trip failed (502): {detail}"
