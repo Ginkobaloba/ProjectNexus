@@ -10,8 +10,10 @@
   Scope boundaries (see the Sprint 3a brief):
     - This file never touches brainstem internals. It speaks only the
       public HTTP contract: POST /generate.
-    - Auth is Sprint 3b. There is an optional token field; when set it is
-      sent as an Authorization: Bearer header. No auth logic lives here.
+    - Auth (Sprint 3b): a bearer token field. When set it is sent as
+      Authorization: Bearer. The brainstem requires it on /generate;
+      without a token /generate will return 401. No auth logic lives
+      here, just the header.
     - Server-side session semantics belong to the Sprint 2 memory agent.
       This client does its half only: it generates a session id, persists
       it in localStorage, and sends it as X-Session-Id on every request.
@@ -287,9 +289,13 @@
     </div>
 
     <div class="field">
-      <label for="authToken">Auth token (optional, Sprint 3b)</label>
-      <input id="authToken" type="password" placeholder="(none)" autocomplete="off" />
-      <div class="hint">Sent as an Authorization: Bearer header when set. Empty by default.</div>
+      <label for="authToken">Auth token</label>
+      <input id="authToken" type="password" placeholder="nxs_..." autocomplete="off" />
+      <div class="hint">
+        Required as of Sprint 3b. Mint with
+        <code>docker compose exec brainstem python scripts/create_token.py --name web</code>
+        on the 4070. Sent as an Authorization: Bearer header.
+      </div>
     </div>
 
     <div class="row">
