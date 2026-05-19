@@ -48,7 +48,21 @@ class Settings(BaseSettings):
     # See docs/auth_middleware.md for the schema and the decision log.
     token_store_path: str = "/data/auth/tokens.json"
 
+    # --Cortex-down handling-- Sprint 3c.
+    # Structured 503 returned by /generate when the 4090 Cortex peer is
+    # unreachable. The body carries `retry_after_seconds`; the Retry-After
+    # response header carries the same integer. Two knobs because a hard
+    # "connection refused" is a different operational signal than a
+    # timeout (model loaded but slow). See docs/exposure_and_cortex_down.md.
+    cortex_down_retry_after_seconds: int = 5
+    cortex_timeout_retry_after_seconds: int = 15
+
     # Service
+    # Inside the container the brainstem listens on 0.0.0.0 so compose-
+    # network peers (embedder, nas) can reach it and the healthcheck can
+    # hit it from the same container. The HOST-side bind is restricted to
+    # the Tailscale interface via docker-compose port mapping (the env var
+    # BRAINSTEM_BIND_HOST in docker/.env). See docs/exposure_and_cortex_down.md.
     host: str = "0.0.0.0"
     port: int = 5001
 

@@ -7,7 +7,14 @@ services:
     container_name: brainstem_4070
     restart: unless-stopped
     ports:
-      - "5001:5001"
+      # Sprint 3c: bind on the HOST side to the Tailscale interface only.
+      # ${BRAINSTEM_BIND_HOST} comes from docker/.env on the 4070
+      # (operator writes the result of `tailscale ip -4`). Defaults to
+      # 127.0.0.1 so a fresh checkout still runs end to end on a laptop
+      # without a Tailscale install. Inside the container we still bind
+      # 0.0.0.0 so embedder/nas can reach us over the compose bridge.
+      # See docs/exposure_and_cortex_down.md for the design.
+      - "${BRAINSTEM_BIND_HOST:-127.0.0.1}:5001:5001"
     environment:
       - BRAINSTEM_DEVICE=cpu
       # 4090 Cortex inference peer (vLLM OpenAI-compatible API) over the LAN.
@@ -33,6 +40,17 @@ services:
       - embedder
     networks:
       - nexusnet
+    healthcheck:
+      # Sprint 3c: liveness probe that does not depend on Cortex. /health
+      # only checks the embedder, so the brainstem reports healthy even
+      # during a Cortex outage (which is the whole point of the new 503
+      # path). We run the check inside the container against the
+      # in-container bind, not against the host-side Tailscale port.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=3).status==200 else sys.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   embedder:
     build:

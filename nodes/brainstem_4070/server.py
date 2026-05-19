@@ -8,7 +8,7 @@ import uuid
 
 import requests
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from core.nas_client import NASClient
@@ -214,6 +214,73 @@ def _resolve_session_id(header_value: Optional[str]) -> str:
 RETRIEVAL_K = 5
 
 
+# Sprint 3c: the Cortex-down contract. When the 4090 inference peer is
+# unreachable the brainstem returns this shape with a `Retry-After`
+# header so a client can do an informed retry. The string codes are
+# stable; clients branch on them. See docs/exposure_and_cortex_down.md.
+CORTEX_UNAVAILABLE = "cortex_unavailable"
+CORTEX_TIMEOUT = "cortex_timeout"
+
+_CORTEX_DOWN_HUMAN_MESSAGE = (
+    "Cortex (4090 inference peer) is unreachable. The brainstem is up; "
+    "this is a transient downstream failure."
+)
+_CORTEX_TIMEOUT_HUMAN_MESSAGE = (
+    "Cortex (4090 inference peer) accepted the request but did not "
+    "respond in time. The brainstem is up; the model is slow or stuck."
+)
+
+
+def _classify_cortex_error(exc: Exception):
+    """Map a CortexError to (code, retry_after_seconds, human message).
+
+    Timeout-flavored exceptions earn the longer retry: the connection
+    succeeded, the model is just slow. Everything else (refused, reset,
+    DNS, OS error) is treated as transient unavailability with the
+    shorter retry. The exception message is what the CortexClient
+    formatted, which already includes the URL and the underlying
+    requests exception class for ops debugging.
+    """
+    text = str(exc).lower()
+    if "timeout" in text or "timed out" in text:
+        return (
+            CORTEX_TIMEOUT,
+            settings.cortex_timeout_retry_after_seconds,
+            _CORTEX_TIMEOUT_HUMAN_MESSAGE,
+        )
+    return (
+        CORTEX_UNAVAILABLE,
+        settings.cortex_down_retry_after_seconds,
+        _CORTEX_DOWN_HUMAN_MESSAGE,
+    )
+
+
+def _cortex_down_response(
+    exc: Exception,
+    session_id: Optional[str],
+    turn_idx: Optional[int],
+) -> JSONResponse:
+    """Build the Sprint 3c 503 response from a raised CortexError.
+
+    The Retry-After header carries the same integer as the JSON
+    `retry_after_seconds` field, so a standards-respecting client and
+    a contract-respecting client land in the same place.
+    """
+    code, retry_after, message = _classify_cortex_error(exc)
+    body = {
+        "error": code,
+        "retry_after_seconds": retry_after,
+        "message": message,
+        "session_id": session_id,
+        "turn_idx": turn_idx,
+    }
+    return JSONResponse(
+        status_code=503,
+        content=body,
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 def _format_retrieved_context(matches: List[Dict[str, Any]]) -> str:
     """Format the top-k matches into a single system-context block. We
     keep this short and structured so the model can ignore irrelevant
@@ -269,6 +336,12 @@ def generate(
     Sprint 3b: auth is required. The validated token entry is available
     as `auth`; its name is logged and written to the metric record for
     per-client attribution.
+
+    Sprint 3c: when the 4090 Cortex peer is unreachable this endpoint
+    returns a structured 503 with `error`, `retry_after_seconds`,
+    `message`, `session_id`, and `turn_idx` fields, plus a `Retry-After`
+    header. Memory writes are skipped in that case (no assistant text to
+    embed). See docs/exposure_and_cortex_down.md for the contract.
     """
     session_id = _resolve_session_id(x_session_id)
 
@@ -393,8 +466,23 @@ def generate(
     recent_roundtrips.append(record.to_dict())
 
     if not ok:
-        logger.error("Cortex relay failed: %s", err)
-        raise HTTPException(status_code=502, detail=f"Cortex unreachable: {err}")
+        # Sprint 3c: Cortex is unreachable. Return the structured 503
+        # contract with a Retry-After header. The metric record above
+        # already landed, so the operational view sees the failure with
+        # the same per-token attribution as a successful request.
+        logger.error(
+            "Cortex relay failed: token=%s session=%s err=%s",
+            auth.name, session_id, err,
+        )
+        # Reconstruct the exception we lost when we collapsed it to a
+        # string above. We only need it for the classifier, which is a
+        # plain string match. A bare RuntimeError carries the message
+        # forward without changing the classification rules.
+        return _cortex_down_response(
+            RuntimeError(err or "cortex unreachable"),
+            session_id=session_id,
+            turn_idx=None,
+        )
 
     logger.info(
         "generate ok: token=%s session=%s turn=%d total=%.1fms "
@@ -539,6 +627,10 @@ def root():
     flagged here so a client poking the root URL can see what to send.
     Status endpoints stay anonymous so the dashboard and any external
     uptime check can poll without a token.
+
+    Sprint 3c: the cortex_down_contract block advertises the 503 shape so
+    a client poking the root URL can discover what to expect when the
+    4090 inference peer is unreachable. See docs/exposure_and_cortex_down.md.
     """
     return {
         "service": "Nexus Brainstem (4070)",
@@ -563,5 +655,15 @@ def root():
                 "/embed",
                 "/stm/write",
             ],
+        },
+        "cortex_down_contract": {
+            "doc": "docs/exposure_and_cortex_down.md",
+            "status": 503,
+            "header": "Retry-After",
+            "body_fields": [
+                "error", "retry_after_seconds", "message",
+                "session_id", "turn_idx",
+            ],
+            "error_codes": [CORTEX_UNAVAILABLE, CORTEX_TIMEOUT],
         },
     }
