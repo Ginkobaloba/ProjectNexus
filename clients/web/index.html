@@ -14,6 +14,11 @@
       Authorization: Bearer. The brainstem requires it on /generate;
       without a token /generate will return 401. No auth logic lives
       here, just the header.
+    - Cortex-down (Sprint 3c): if the brainstem returns the structured
+      503 cortex-unavailable body, we show a friendly "retrying in Ns"
+      system message, sleep retry_after_seconds, and do exactly one
+      retry. A second 503 is surfaced as a human-readable error. See
+      docs/exposure_and_cortex_down.md.
     - Server-side session semantics belong to the Sprint 2 memory agent.
       This client does its half only: it generates a session id, persists
       it in localStorage, and sends it as X-Session-Id on every request.
@@ -402,8 +407,7 @@ function endpoint(path) {
 
 function authHeaders() {
   // X-Session-Id always. Authorization only when there is a token to send;
-  // an empty Authorization header would just be noise. The hook is here
-  // and ready for Sprint 3b.
+  // an empty Authorization header would just be noise.
   const h = {
     "Content-Type": "application/json",
     "X-Session-Id": state.sessionId,
@@ -454,6 +458,47 @@ function addTyping() {
 // ----------------------------------------------------------------------
 // The round trip. POST /generate, render the reply.
 // ----------------------------------------------------------------------
+// Sprint 3c: one informed retry on the structured 503 cortex-down
+// contract. Returns a fetch Response, or throws on network failure.
+async function generateOnce(body) {
+  return fetch(endpoint("/generate"), {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  });
+}
+
+// Parse the cortex-down body. Defensive: returns {} on any surprise so
+// the caller can still fall back to the Retry-After header.
+async function parseCortexDownBody(resp) {
+  try {
+    const raw = await resp.text();
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === "object") ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function retryAfterSeconds(resp, body) {
+  // The JSON body's retry_after_seconds and the Retry-After header carry
+  // the same integer. Prefer the body so we can also branch on the
+  // `error` code; fall back to the header for older brainstems.
+  if (body && typeof body.retry_after_seconds === "number") {
+    return body.retry_after_seconds;
+  }
+  const hdr = resp.headers.get("Retry-After");
+  if (hdr) {
+    const n = parseInt(hdr, 10);
+    if (!isNaN(n)) return n;
+  }
+  return 5;
+}
+
+function sleep(ms) {
+  return new Promise(function (r) { setTimeout(r, ms); });
+}
+
 async function sendPrompt(text) {
   if (state.busy) return;
   state.busy = true;
@@ -470,26 +515,53 @@ async function sendPrompt(text) {
   if (state.systemPrompt) body.system = state.systemPrompt;
 
   const t0 = performance.now();
+  let waitingMsg = null;
   try {
-    const resp = await fetch(endpoint("/generate"), {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify(body),
-    });
+    let resp = await generateOnce(body);
+
+    // Sprint 3c: Cortex-unavailable retry path. One automatic retry that
+    // honors retry_after_seconds, with a friendly visible countdown.
+    if (resp.status === 503) {
+      const down = await parseCortexDownBody(resp);
+      const wait = Math.max(1, Math.min(retryAfterSeconds(resp, down), 30));
+      const human = down.message ||
+        "Cortex is unavailable. Brainstem is up; this is a transient downstream failure.";
+      waitingMsg = addMessage(
+        "system",
+        human + " Retrying in " + wait + "s..."
+      );
+      await sleep(wait * 1000);
+      resp = await generateOnce(body);
+    }
+
     const clientMs = performance.now() - t0;
 
     let payload = null;
     let raw = "";
     try { raw = await resp.text(); payload = JSON.parse(raw); } catch (e) { /* non-JSON */ }
 
+    if (waitingMsg) { waitingMsg.remove(); waitingMsg = null; }
     typing.remove();
 
     if (!resp.ok) {
+      if (resp.status === 503 && payload) {
+        // Second 503: give up auto-retrying. Render the human message
+        // verbatim so the user sees exactly what the brainstem says.
+        const wait = retryAfterSeconds(resp, payload);
+        addMessage(
+          "error",
+          (payload.message ||
+            "Cortex is still unavailable.") +
+          "\n\nTry again in about " + wait + " seconds."
+        );
+        return;
+      }
       // FastAPI errors come back as {"detail": ...}. A 502 means the
-      // brainstem is up but the Cortex round trip failed.
-      const detail = (payload && payload.detail) ? payload.detail : (raw || resp.statusText);
+      // brainstem is up but a downstream (non-Cortex) call failed.
+      const detail = (payload && (payload.detail || payload.message)) ||
+                     (raw || resp.statusText);
       const prefix = resp.status === 502
-        ? "Brainstem reached, but the Cortex round trip failed (502): "
+        ? "Brainstem reached, but a downstream call failed (502): "
         : "Brainstem returned HTTP " + resp.status + ": ";
       addMessage("error", prefix + detail);
       return;
@@ -509,6 +581,7 @@ async function sendPrompt(text) {
       "  |  " + tps.toFixed(1) + " tok/s";
     addMessage("nexus", payload.text, meta);
   } catch (err) {
+    if (waitingMsg) { waitingMsg.remove(); waitingMsg = null; }
     typing.remove();
     // A bare network failure here is usually the proxy not running, the
     // brainstem being down, or (if an absolute apiBase is set) CORS.

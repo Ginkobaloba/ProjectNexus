@@ -19,6 +19,10 @@ Scope boundaries (deliberate, see the Sprint 3a brief):
     - Auth (Sprint 3b): the brainstem requires a bearer token on
       /generate. This client attaches one from --token, NEXUS_AUTH_TOKEN,
       or the shared config. No auth logic lives here, just the header.
+    - Cortex-down (Sprint 3c): on the structured 503 cortex-unavailable
+      body, the CLI does one informed retry honoring `Retry-After` and
+      prints a friendly "retrying in Ns" line to stderr. A second 503
+      is surfaced as a human-readable error and the REPL stays open.
     - Server-side session semantics are owned by the Sprint 2 memory agent.
       This client only does its half of the contract: generate a session
       id, persist it, and send it as the X-Session-Id header on every
@@ -130,6 +134,20 @@ class BrainstemError(RuntimeError):
     """Raised when the brainstem call fails in a way worth showing the user."""
 
 
+class CortexDownError(BrainstemError):
+    """Sprint 3c: brainstem returned the structured 503 cortex-down body.
+
+    Carries `retry_after_seconds` and the `error` code so the caller can
+    do one informed retry honoring the contract instead of forcing the
+    user to re-send.
+    """
+
+    def __init__(self, message: str, retry_after_seconds: int, error_code: str):
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+        self.error_code = error_code
+
+
 def resolve_base_url(args: argparse.Namespace, cfg: Dict[str, Any]) -> str:
     """Decide which brainstem URL to hit.
 
@@ -196,7 +214,9 @@ def call_generate(
 
     The result carries the generated text, the model id, token usage, the
     finish reason, and the client-measured latency. Raises BrainstemError
-    with a human-readable message on any failure.
+    with a human-readable message on any failure. Sprint 3c: a 503 from
+    the brainstem's cortex-down contract raises CortexDownError, a
+    BrainstemError subclass that carries the retry_after value.
     """
     url = f"{base_url}/generate"
     body: Dict[str, Any] = {
@@ -219,10 +239,16 @@ def call_generate(
         with urllib.request.urlopen(request, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        # FastAPI errors come back as JSON {"detail": ...}. A 401 here
-        # means we have no token or the wrong one. A 502 means the
-        # brainstem is up but the Cortex round trip failed.
-        detail = _extract_http_error_detail(exc)
+        # A 401 here means we have no token or the wrong one. A 503
+        # (Sprint 3c) is the cortex-down contract: structured body with
+        # `error`, `retry_after_seconds`, and a human `message` we
+        # surface verbatim. A 502 is anything else downstream.
+        body_dict = _extract_cortex_down_body(exc)
+        detail = (
+            body_dict.get("message")
+            or body_dict.get("detail")
+            or _readable_reason(exc)
+        )
         if exc.code == 401:
             raise BrainstemError(
                 f"brainstem rejected the request (401 {detail}). "
@@ -230,9 +256,20 @@ def call_generate(
                 f"Mint one on the 4070 with "
                 f"`docker compose exec brainstem python scripts/create_token.py --name <client>`."
             ) from exc
+        if exc.code == 503:
+            retry_after = (
+                body_dict.get("retry_after_seconds")
+                or _retry_after_header_seconds(exc)
+                or 5
+            )
+            raise CortexDownError(
+                message=str(detail),
+                retry_after_seconds=int(retry_after),
+                error_code=str(body_dict.get("error") or "cortex_unavailable"),
+            ) from exc
         if exc.code == 502:
             raise BrainstemError(
-                f"brainstem reached, but Cortex round trip failed (502): {detail}"
+                f"brainstem reached, but a downstream call failed (502): {detail}"
             ) from exc
         raise BrainstemError(f"brainstem returned HTTP {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
@@ -264,16 +301,46 @@ def call_generate(
     }
 
 
-def _extract_http_error_detail(exc: urllib.error.HTTPError) -> str:
-    """Pull a readable message out of an HTTPError body if there is one."""
+def _readable_reason(exc: urllib.error.HTTPError) -> str:
+    """Cheap fallback when we have no parseable body to lean on."""
     try:
-        body = exc.read().decode("utf-8")
-        parsed = json.loads(body)
-        if isinstance(parsed, dict) and "detail" in parsed:
-            return str(parsed["detail"])
-        return body.strip() or exc.reason
+        return exc.reason or f"HTTP {exc.code}"
+    except AttributeError:
+        return f"HTTP {exc.code}"
+
+
+def _extract_cortex_down_body(exc: urllib.error.HTTPError) -> Dict[str, Any]:
+    """Parse the Sprint 3c 503 body (or any other JSON error body).
+
+    HTTPError.read() consumes the underlying stream, so we read once and
+    keep the parsed dict. Returns an empty dict on any surprise so callers
+    can fall back to the Retry-After header for the timing and the
+    exception's reason for the message.
+    """
+    try:
+        raw = exc.read().decode("utf-8")
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
     except (OSError, json.JSONDecodeError, AttributeError):
-        return exc.reason
+        pass
+    return {}
+
+
+def _retry_after_header_seconds(exc: urllib.error.HTTPError) -> Optional[int]:
+    """Read the Retry-After header from an HTTPError. RFC 7231 allows a
+    seconds-integer or an HTTP-date; we only care about the integer
+    form, since the brainstem only ever emits that."""
+    try:
+        value = exc.headers.get("Retry-After")  # type: ignore[union-attr]
+    except AttributeError:
+        return None
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -292,6 +359,37 @@ def format_footer(result: Dict[str, Any]) -> str:
     )
 
 
+def _call_with_cortex_down_retry(
+    base_url: str,
+    prompt: str,
+    headers: Dict[str, str],
+    args: argparse.Namespace,
+) -> Dict[str, Any]:
+    """Run /generate with one informed retry on the Sprint 3c 503.
+
+    A CortexDownError on the first attempt prints a friendly waiting
+    message to stderr and sleeps for `retry_after_seconds` (capped) before
+    the second attempt. If the second attempt also fails we let the
+    exception propagate so the caller renders the final state.
+    """
+    try:
+        return call_generate(
+            base_url, prompt, headers, args.system,
+            args.max_tokens, args.temperature, args.timeout,
+        )
+    except CortexDownError as exc:
+        wait = max(1, min(int(exc.retry_after_seconds or 5), 30))
+        print(
+            f"[cortex down] {exc} retrying in {wait}s...",
+            file=sys.stderr,
+        )
+        time.sleep(wait)
+        return call_generate(
+            base_url, prompt, headers, args.system,
+            args.max_tokens, args.temperature, args.timeout,
+        )
+
+
 def run_once(
     base_url: str,
     prompt: str,
@@ -300,10 +398,13 @@ def run_once(
 ) -> int:
     """One-shot mode: send a single prompt, print the response, return exit code."""
     try:
-        result = call_generate(
-            base_url, prompt, headers, args.system,
-            args.max_tokens, args.temperature, args.timeout,
+        result = _call_with_cortex_down_retry(base_url, prompt, headers, args)
+    except CortexDownError as exc:
+        print(
+            f"[error] cortex still unavailable after one retry: {exc}",
+            file=sys.stderr,
         )
+        return 1
     except BrainstemError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 1
@@ -361,10 +462,15 @@ def run_repl(
             continue
 
         try:
-            result = call_generate(
-                base_url, line, current_headers, args.system,
-                args.max_tokens, args.temperature, args.timeout,
+            result = _call_with_cortex_down_retry(
+                base_url, line, current_headers, args,
             )
+        except CortexDownError as exc:
+            print(
+                f"[error] cortex still unavailable after one retry: {exc}\n",
+                file=sys.stderr,
+            )
+            continue
         except BrainstemError as exc:
             print(f"[error] {exc}\n", file=sys.stderr)
             continue
