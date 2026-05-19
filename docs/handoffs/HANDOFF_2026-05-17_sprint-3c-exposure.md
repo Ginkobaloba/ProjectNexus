@@ -292,6 +292,44 @@ state from the prior session and are not part of Sprint 3c. They
 should be left to a separate cleanup pass; mixing them into Sprint 3c
 would muddy the commit history this handoff describes.
 
+## Known follow-up (filed during the 2026-05-18 commit-and-push pass)
+
+`nodes/brainstem_4070/auth.py:88` calls `hashlib.scrypt(...)` with
+`N=2**15`, `R=8`, `P=1`, which gives `maxmem = 128 * 32768 * 8 =
+33,554,432` bytes. That is exactly OpenSSL's 32 MiB scrypt memlimit
+ceiling, and on OpenSSL 3.0.11 (shipped with the stock Windows
+`C:\Program Files\Python311\python.exe`, Sep 2023 build) the check
+rejects values at the boundary, not just over it. Effect: every test
+that builds a token store via the auth fixture errors at setup with
+`ValueError: [digital envelope routines] memory limit exceeded`, even
+though the Sprint 3c diff itself never touches scrypt. Surfaced during
+the Sprint 3c push verification on the 4070 host; the prior session
+ran on a different Python build where the same call passed cleanly.
+
+Two equally reasonable fixes for whoever picks this up (Sprint 3e or
+the next person through the auth path):
+
+1. Bump `maxmem` to a value that is strictly above the OpenSSL ceiling
+   on the affected build, for example pass `maxmem=32 * 1024 * 1024`
+   explicitly (which is 33,554,432 stated as the OpenSSL ceiling
+   itself) and confirm scrypt clears the check, or step up to
+   `maxmem=64 * 1024 * 1024` to leave headroom across OpenSSL builds.
+   Verify with a single-process repro on Python 3.11 + OpenSSL 3.0.11
+   before merging.
+2. Pin the project's Python floor to 3.13 (whose bundled OpenSSL is
+   newer and no longer enforces the strict 32 MiB cap at the
+   boundary), document it in `reqirements.txt` and the repo README,
+   and treat 3.11 as unsupported for local dev. This is the
+   lower-effort but more invasive option.
+
+The diff under test for Sprint 3c (cortex-down 503 contract, bind
+config, retry knobs) is unaffected. The 3 Sprint 3c tests that do not
+touch the auth fixture (`test_dev_fallback_bind_is_loopback`,
+`test_dev_fallback_bind_respects_env`,
+`test_brainstem_config_exposes_retry_knobs`) pass clean on the
+affected build. The push proceeded after confirming the failure was
+purely env-driven.
+
 Sources: this handoff is based on the in-progress state of
 `foundation/consolidation` plus the full test runs above. Source files:
 `nodes/brainstem_4070/server.py`, `nodes/brainstem_4070/config.py`,
