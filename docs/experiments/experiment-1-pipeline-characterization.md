@@ -529,4 +529,14 @@ For the canonical arm:
 2. Pre-transport encode.
 3. Post-transport on 4070 ingress: HTTP request received.
 4. 4070 router decision: pre-route, post-route.
-5.
+5. 4070 cache lookup: pre, post, hit/miss flag.
+6. 4070 DB read (if triggered): pre, post.
+7. 4070 embedder: pre, post.
+8. 4070 → NAS write: pre-call, post-response.
+9. NAS ingress, post-Chroma-write, post-episodic-append.
+10. 4070 → 4090 link: pre-send, post-send, payload size before and after codec.
+11. 4090 model: pre-decode, post-decode, callback-triggered flag, per-callback timing.
+12. 4090 → 4070 callback request: pre, post (both sides).
+13. 4070 result available to consumer.
+
+These thirteen probes are the first concrete code drop after the open questions are answered and v0.6 is locked. Phase 0 Component G ships them, and every later component's acceptance signal reads off the same harness, which is why Component G lands first in the build order described above.
