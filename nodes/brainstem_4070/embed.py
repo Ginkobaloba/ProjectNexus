@@ -1,28 +1,32 @@
 # nodes/brainstem_4070/embed.py
+"""
+DEPRECATED as of Sprint 2 Chunk A.
+
+The brainstem no longer owns the embedding model. Embedding lives in
+the embedder service (see `nodes/embedder_4070/`). Use
+`brainstem_4070.embedder_client.EmbedderClient` instead, which is what
+`server.py` does.
+
+This stub stays in place for one release so any straggler import fails
+loudly with a useful pointer instead of silently importing a stale
+sentence-transformers stack into the brainstem.
+"""
 from typing import List
 
-from sentence_transformers import SentenceTransformer
-from .config import settings
 
-_model: SentenceTransformer | None = None
-
-
-def get_model() -> SentenceTransformer:
-    global _model
-    if _model is None:
-        _model = SentenceTransformer(settings.model_name, device=settings.device)
-    return _model
+class _DeprecatedEmbedError(RuntimeError):
+    pass
 
 
-def embed_texts(texts: List[str]) -> List[list[float]]:
-    """
-    Returns L2-normalized embeddings for a list of texts.
-    """
-    model = get_model()
-    emb = model.encode(
-        texts,
-        batch_size=16,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
+def get_model():  # pragma: no cover
+    raise _DeprecatedEmbedError(
+        "brainstem_4070.embed is deprecated. Use brainstem_4070.embedder_client "
+        "which talks to the embedder service over HTTP."
     )
-    return emb.tolist()
+
+
+def embed_texts(texts: List[str]):  # pragma: no cover
+    raise _DeprecatedEmbedError(
+        "brainstem_4070.embed.embed_texts is deprecated. Use "
+        "brainstem_4070.embedder_client.EmbedderClient.embed(texts) instead."
+    )

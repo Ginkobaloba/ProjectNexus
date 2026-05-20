@@ -1,0 +1,28 @@
+# Keep the Docker build context small. The brainstem and nas images only
+# need core/ and nodes/, so exclude the heavy vendored trees, VCS data,
+# and local caches that would otherwise be shipped to the daemon on build.
+
+.git
+.github
+.vscode
+
+# Vendored / sibling projects not part of the container images
+Nexus_N8N-MCP
+Nexus-Automation-Node
+Nexus-LLM-Runtime-4090
+Nexus_N8N-MCP/node_modules
+**/node_modules
+
+# Python / tooling caches
+**/__pycache__
+**/*.pyc
+.mypy_cache
+.pytest_cache
+.venv
+venv
+
+# Local data and model artifacts
+data/nas
+
+# Docs and papers are not needed inside the images
+papers
