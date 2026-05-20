@@ -154,6 +154,9 @@ sessions/
 # Episodic logs (optional to track — up to you)
 data/nas/episodic.jsonl
 
+# Phase 0 metric harness JSONL sink (regenerated at runtime, not source)
+data/metrics/
+
 # If you don’t want episodic logs committed, uncomment:
 # data/nas/episodic.jsonl
 
@@ -164,6 +167,48 @@ data/nas/episodic.jsonl
 Thumbs.db
 desktop.ini
 
+##########################
+# OFFICE LOCKFILES
+##########################
+~$*.docx
+~$*.xlsx
+~$*.pptx
+
+##########################
+# SECRETS (extra filename patterns beyond the SECRET FILES section above)
+##########################
+Google Keys.txt
+.mcp.json
+.claude/settings.local.json
+
+##########################
+# MODEL WEIGHTS (pair with SOPS for encrypted config; never commit raw weights)
+##########################
+Nexus-LLM-Runtime-4090/models/
+infra/cortex-runtime/models/
+*.safetensors
+*.gguf
+*.onnx
+
+##########################
+# N8N BACKUP ARCHIVES
+##########################
+*.n8n_backup*.tar.gz
+
 ############################################################
 # END OF .gitignore
 ############################################################
+
+
+##########################
+# VENDORED EXTERNAL TOOLS (not built here, see docs/archived/)
+##########################
+# n8n-mcp was useful before LLM tool-calling matured. Kept on disk as
+# reference, ignored in this repo. Origin: github.com/czlonkowski/n8n-mcp
+Nexus_N8N-MCP/
+
+##########################
+# AUTOMATION RUNTIME STATE
+##########################
+# n8n container volume data, regenerated at runtime; not source
+Nexus-Automation-Node/

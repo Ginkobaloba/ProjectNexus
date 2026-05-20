@@ -1,0 +1,142 @@
+services:
+  ####################################################################
+  # TRAEFIK — Reverse Proxy + Router
+  ####################################################################
+  traefik:
+    image: traefik:v2.11
+    container_name: traefik
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--api.dashboard=true"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./traefik/traefik.yml:/traefik.yml
+      - ./traefik/dynamic:/dynamic
+    networks:
+      - nexus
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.projectnexuscode.org`)"
+      - "traefik.http.routers.traefik.entrypoints=web,websecure"
+      - "traefik.http.routers.traefik.service=api@internal"
+    restart: unless-stopped
+
+
+  ####################################################################
+  # CLOUDFLARED — Cloudflare Tunnel
+  ####################################################################
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    command: >
+      tunnel --no-autoupdate run
+      --token ${CLOUDFLARED_TUNNEL_TOKEN}
+    networks:
+      - nexus
+    restart: unless-stopped
+
+
+  ####################################################################
+  # N8N — Automation Engine
+  ####################################################################
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.8.3
+    container_name: n8n
+    environment:
+      # Timezones
+      - GENERIC_TIMEZONE=US/Central
+      - TZ=US/Central
+
+      # n8n Core Settings
+      - N8N_HOST=n8n.projectnexuscode.org
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://n8n.projectnexuscode.org/
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      # Allow Code nodes to read env vars (required for workflow-registry lookups)
+      - N8n_BLOCK_ENV_ACCESS_IN_NODE=false
+      # Allow Code nodes to use the 'fs' module (required for Load Registry in Nexus.Orchestrator)
+      - NODE_FUNCTION_ALLOW_BUILTIN=fs
+      # Migrate binaryData storage path from /binaryData → /storage ahead of v3 rename
+      - N8N_MIGRATE_FS_STORAGE_PATH=true
+
+      # External API Keys (sourced from .env)
+      # OpenAI — used by Email workflows + LLM.Council (GPT-4o)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Anthropic — used by LLM.Council (Claude 3.5 Sonnet)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # Google Gemini — used by LLM.Council (Gemini 2.0 Flash)
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+
+      # Local LLM Endpoints — Nexus Cortex + Brainstem
+      # Cortex (4090, this machine) — Qwen3-Coder-30B-A3B W4A16, vLLM in WSL2
+      - CORTEX_LLM_URL=http://host.docker.internal:8001
+      # Brainstem (4070, 192.168.1.251) — Qwen3-4B-noFP, vLLM
+      - BRAINSTEM_LLM_URL=http://192.168.1.251:8000
+
+      # n8n REST API key — used by Nexus.Builder to deploy workflows via internal API
+      - N8N_API_KEY=${N8N_API_KEY}
+
+      # GitHub PAT — used by Portfolio.* workflows to commit improved files to repos
+      - GITHUB_PAT=${GITHUB_PAT}
+      - GITHUB_OWNER=Ginkobaloba
+
+      # Google OAuth2 Env Vars
+      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID}
+      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET}
+      - GOOGLE_OAUTH_REDIRECT=${GOOGLE_OAUTH_REDIRECT}
+
+      - N8N_CREDENTIALS_OVERWRITE_DATA={
+          "gmail_main":{
+            "clientId":"${GOOGLE_OAUTH_CLIENT_ID}",
+            "clientSecret":"${GOOGLE_OAUTH_CLIENT_SECRET}",
+            "redirectUri":"${GOOGLE_OAUTH_REDIRECT}",
+            "scopes":[
+              "https://www.googleapis.com/auth/gmail",
+              "https://www.googleapis.com/auth/drive",
+              "https://www.googleapis.com/auth/spreadsheets",
+              "https://www.googleapis.com/auth/documents",
+              "https://www.googleapis.com/auth/calendar"
+            ]
+          },
+          "gmail_alerts":{
+            "clientId":"${GOOGLE_OAUTH_CLIENT_ID}",
+            "clientSecret":"${GOOGLE_OAUTH_CLIENT_SECRET}",
+            "redirectUri":"${GOOGLE_OAUTH_REDIRECT}",
+            "scopes":[
+              "https://www.googleapis.com/auth/gmail"
+            ]
+          }
+        }
+      - NEXUS_LABELS={"urgent":"URGENT","financial":"FINANCES","legal":"LEGAL","personal":"PERSONAL","kids":"KIDS","project":"PROJECT_NEXUS","junk":"JUNK"}
+
+
+    volumes:
+      - n8n_data:/home/node/.n8n
+      # Registry file bind-mounted so Nexus.Builder Code nodes can read/write it
+      - ./workflow-registry.json:/data/workflow-registry.json
+    networks:
+      - nexus
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n.rule=Host(`n8n.projectnexuscode.org`)"
+      - "traefik.http.routers.n8n.entrypoints=web,websecure"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+    restart: unless-stopped
+
+
+####################################################################
+# VOLUMES & NETWORKS
+####################################################################
+volumes:
+  n8n_data:
+
+networks:
+  nexus:
+    driver: bridge

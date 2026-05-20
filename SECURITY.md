@@ -1,7 +1,7 @@
 # Project Nexus — Security Policy
 
-Project Nexus is a distributed cognitive architecture composed of multiple cooperating nodes 
-(brainstem, cortex, NAS memory, and future sensor/agent modules). Because the system stores embeddings, 
+Project Nexus is a distributed cognitive architecture composed of multiple cooperating nodes
+(brainstem, cortex, NAS memory, and future sensor/agent modules). Because the system stores embeddings,
 episodic logs, and sensitive operational data, security is a first-class concern.
 
 ---
@@ -21,17 +21,17 @@ All API keys, credentials, access tokens, and environment-specific configuration
 - OS-level secret stores
 
 **Never commit:**
-- Access_Token.txt  
-- `.env`  
-- HuggingFace tokens  
-- database passwords  
-- model API keys  
+- Access_Token.txt
+- `.env`
+- HuggingFace tokens
+- database passwords
+- model API keys
 
 ---
 
 ## 🧱 2. Node Isolation & Network Boundaries
 
-Each Nexus node (brainstem, NAS, cortex, Jetson agents) must run within isolated Docker containers 
+Each Nexus node (brainstem, NAS, cortex, Jetson agents) must run within isolated Docker containers
 or secured OS processes.
 
 **Only the following ports should be exposed:**
@@ -49,15 +49,15 @@ or secured OS processes.
 
 Semantic and episodic memory may contain:
 
-- user text  
-- derived embeddings  
-- behavioral logs  
-- timestamps  
-- system actions  
+- user text
+- derived embeddings
+- behavioral logs
+- timestamps
+- system actions
 
 These represent sensitive cognitive data.
 
-**ChromaDB persistence must never be committed to Git or shared publicly.**  
+**ChromaDB persistence must never be committed to Git or shared publicly.**
 It is already excluded via `.gitignore`.
 
 ---
@@ -68,10 +68,10 @@ All nodes communicate over internal Docker networks by default.
 
 In production environments, the following should be enforced:
 
-- Mutual TLS between nodes  
-- Network segmentation  
-- Auth tokens for node-to-node requests  
-- Rate limiting on public API routes  
+- Mutual TLS between nodes
+- Network segmentation
+- Auth tokens for node-to-node requests
+- Rate limiting on public API routes
 
 ---
 
@@ -80,12 +80,12 @@ In production environments, the following should be enforced:
 If you believe you have discovered a security issue with Project Nexus:
 
 1. **Do NOT file a public GitHub issue.**
-2. Email the maintainer directly:  
+2. Email the maintainer directly:
    **dramattick1@gmail.com**
 3. Provide:
-   - A description of the issue  
-   - Steps to reproduce  
-   - Potential impact  
+   - A description of the issue
+   - Steps to reproduce
+   - Potential impact
    - Suggested fixes (if known)
 
 The maintainer (or team, in the future) will respond promptly.
@@ -103,5 +103,5 @@ The maintainer (or team, in the future) will respond promptly.
 
 ---
 
-**Project Nexus is being built as a trustworthy, privacy-respecting, secure cognitive system.  
+**Project Nexus is being built as a trustworthy, privacy-respecting, secure cognitive system.
 Security is not optional — it is foundational.**

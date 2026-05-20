@@ -1,0 +1,22 @@
+# SOPS routing rules. For each path pattern, encrypt with the listed age recipient(s).
+# Multiple recipients = multiple decrypters. Add each new host's public key to the
+# `age:` list when the cluster grows (e.g. when the 4070 comes back online).
+#
+# Current recipients: 4090 host (Drama@DREWSPC).
+#
+# Daily commands:
+#   sops --encrypt --in-place automation/.env      # encrypt a freshly edited plaintext
+#   sops automation/.env                            # edit encrypted file in $EDITOR
+#   sops --decrypt automation/.env > automation/.env.local   # decrypt for compose
+#
+# Every value in matched files is encrypted. Comments and keys stay readable.
+
+creation_rules:
+  - path_regex: \.env$
+    age: age12hmd5vz88zlh9q0havfy45txddk40tpnqcsg8c7ejcz4h2aj9s7qwrqr4u
+
+  - path_regex: \.env\.[^/]+$
+    age: age12hmd5vz88zlh9q0havfy45txddk40tpnqcsg8c7ejcz4h2aj9s7qwrqr4u
+
+  - path_regex: secrets\.ya?ml$
+    age: age12hmd5vz88zlh9q0havfy45txddk40tpnqcsg8c7ejcz4h2aj9s7qwrqr4u

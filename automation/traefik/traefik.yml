@@ -1,0 +1,15 @@
+api:
+  dashboard: true
+
+providers:
+  docker:
+    exposedByDefault: false
+  file:
+    directory: /dynamic
+    watch: true
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
