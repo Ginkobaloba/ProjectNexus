@@ -1,117 +1,60 @@
-# NEXUS: A Distributed Cognitive Architecture
+# Project Nexus
 
-Nexus is a biologically inspired, multi-node AI system built across heterogeneous hardware:
-Jetson edge devices, a 4070 “brainstem” node, a NAS-backed long-term memory substrate, and a 4090 “cortical” reasoning engine.
-The project models concepts from biological cognition — perception, filtering, memory consolidation, hierarchical reasoning — through a modular, containerized architecture.
+A distributed cognitive architecture built across heterogeneous hardware: Jetson edge devices, a 4070 "brainstem" node, a NAS-backed long-term memory substrate, and a 4090 "cortex" reasoning engine.
 
-Nexus is designed to explore:
-distributed synthetic cognition
-persistent identity structures
-long-term memory for LLMs
-multi-node orchestration
-memory filtering, abstraction, and decay
-low-latency cross-device inference
-safe agent behavior via layered gating
-This repository contains the early implementation and ongoing development of the Nexus system.
+Nexus models concepts from biological cognition (perception, filtering, memory consolidation, hierarchical reasoning) as a modular, containerized system. It is not a single model; it is an ecosystem of cooperating processes.
 
-🔱 Project Vision
+## What Nexus explores
 
-Biological intelligence is not monolithic — it’s distributed.
-Nerves preprocess.
-The brainstem filters.
-Memory consolidates.
-The cortex reasons.
+- Distributed synthetic cognition across commodity GPUs and edge devices
+- Persistent identity structures over long time horizons
+- Long-term memory substrates for LLMs (semantic, episodic, schema-driven)
+- Multi-node orchestration with low-latency cross-device inference
+- Memory filtering, abstraction, and decay
+- Safe agent behavior via layered gating and instinctual rules
 
-Nexus recreates this architecture in software.
+## Architectural model
 
-Goal: Build a synthetic cognitive organism using commodity hardware, capable of perception, memory, deliberation, and self-consistent behavior over time.
+Biological intelligence is distributed. Nerves preprocess. The brainstem filters. Memory consolidates. The cortex reasons. Nexus recreates that division of labor in software.
 
-Nexus is not a single model.
-It’s an ecosystem of cooperating processes.
+### Components
 
-🧠 System Overview
+1. **Jetson nodes (peripheral nervous system).** Capture raw video, audio, telemetry. Perform early filtering and compression. Push signals to the brainstem.
+2. **4070 node (brainstem).** Validates incoming signals, generates embeddings, applies instinctual rules, buffers short-term memory, and decides what is important enough to consolidate.
+3. **NAS (long-term memory).** Vector database for semantic memory, time-ordered episodic logs, knowledge graph structures, decay and deduplication. Synthetic hippocampus.
+4. **4090 node (cortex).** Hosts large-scale LLM reasoning, executes high-level planning, integrates episodic and semantic recall, and orchestrates downstream agents.
+5. **Consolidation engine (sleep node).** Re-embeds old memories, clusters and abstracts concepts, summarizes logs into narratives, enforces schema consistency, runs "synthetic dreams".
 
-Nexus consists of five core components:
+## Research
 
-1. Jetson Nodes — Peripheral Nervous System
-Capture raw video/audio/telemetry
-Perform early filtering and compression
-Push signals to the 4070 brainstem
-Represent “nerves” in a biological analogy
+Nexus is developed alongside three research works covering:
 
-2. 4070 Node — Brainstem
-Validates incoming signals
-Generates embeddings
-Applies instinctual rules
-Performs short-term memory buffering
-Decides what is important enough to store
+- Synthetic continuity and identity persistence
+- Biologically-inspired distributed cognition
+- Containerized intelligence and propagation patterns
 
-3. NAS — Long-Term Memory
-Vector database for semantic memory
-Time-ordered episodic logs
-Knowledge graph structures
-Decay, summarization, & deduplication
-Acts as the synthetic hippocampus
+Drafts live in `papers/`.
 
-4. 4090 Node — Cortex
-Hosts large-scale LLM reasoning
-Executes high-level planning
-Integrates episodic + semantic recall
-Performs multi-agent orchestration
+## Roadmap
 
-5. Consolidation Engine (“Sleep Node”)
+**Phase 1: core bring-up.** Inter-node message bus, Jetson to 4070 to NAS pathway, vLLM / llama.cpp on the 4090, memory schemas and storage logic.
 
-Re-embeds old memories
-Clusters + abstracts concepts
-Summarizes logs into narratives
-Enforces schema consistency
-Performs “synthetic dreams”
+**Phase 2: multi-node coordination.** Real-time sensory processing, brainstem instinct engine, semantic and episodic write pipelines, cortex RAG integration.
 
-📚 Research
+**Phase 3: autonomous consolidation.** Replay cycles, schema enforcement, summarization, daily sleep routines.
 
-Nexus is built alongside three research works exploring:
-Synthetic continuity & identity persistence
-Biologically inspired distributed cognition
-Containerized intelligence and viral AI propagation
-These documents live in the papers/ directory.
+**Phase 4: safety and alignment layer.** Rate limits, instinctual rules, safe-operation constraints, preference stability.
 
-📅 Roadmap
-Phase 1 — Core Bring-Up
-Create inter-node message bus
-Implement Jetson → 4070 → NAS pathway
-Spin up vLLM/Llama.cpp for 4090
-Define memory schemas & storage logic
+## Contributions
 
-Phase 2 — Multi-Node Coordination
+Nexus is an evolving research-grade architecture. Contributions, ideas, and code reviews are welcome as the system matures.
 
-Real-time sensory processing
-Brainstem instinct engine
-Semantic & episodic write pipeline
-Cortex RAG integration
+## Contact
 
-Phase 3 — Autonomous Consolidation
+- Author: Andrew "Drew" Mattick
+- GitHub: [Ginkobaloba](https://github.com/Ginkobaloba)
+- Marketing site: [projectnexuscode.org](https://projectnexuscode.org)
 
-Replay cycles
-Schema enforcement
-Memory summarization
-Daily “sleep” routines
+## License
 
-Phase 4 — Safety & Alignment Layer
-
-Rate limits
-Instinctual rules
-Safe-operation constraints
-Preference stability
-
-🤝 Contributions
-
-This is an evolving research-grade architecture.
-Contributions, ideas, and code reviews are welcome as the system matures.
-
-📩 Contact
-
-Author: Andrew Mattick
-Role: Machine Learning Engineer / Researcher
-GitHub: https://github.com/ginkobaloba
-
-Website: (future) projectnexus.org
+See `LICENSE`.
