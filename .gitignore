@@ -212,3 +212,12 @@ Nexus_N8N-MCP/
 ##########################
 # n8n container volume data, regenerated at runtime; not source
 Nexus-Automation-Node/
+
+##########################
+# Probe / Claude / Python build artifacts (added 2026-05-29 per retro auto-actionable batch)
+##########################
+.claude/
+**/*.egg-info/
+.tmp_*
+.size_test
+.write_test
