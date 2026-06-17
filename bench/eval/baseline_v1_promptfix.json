@@ -1,0 +1,140 @@
+{
+  "baseline_version": "v1",
+  "task_family": "1-builder-workflow-synthesis",
+  "experiment": "track-c-verifier-guided-best-of-n",
+  "metric": "valid@k = parse -> node-whitelist -> n8n validate_workflow, all pass",
+  "dataset": {
+    "path": "bench/eval/datasets/builder_heldout_v1.jsonl",
+    "n": 50,
+    "sha256": "36af0620e3acd4638c13d6f2c5ca74281b52ff181689a9ddc83efcc2d73792b5",
+    "registry": 30,
+    "synthesized": 20
+  },
+  "model": {
+    "id": "cyankiwi/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit",
+    "quant": "AWQ-4bit compressed-tensors",
+    "max_model_len": 8192,
+    "endpoint": "http://localhost:8000"
+  },
+  "sampling": {
+    "prompt_version": "builder-generate-v1",
+    "prompt_variant": "augmented",
+    "baseline_temperature": 0.0,
+    "sample_temperature": 0.8,
+    "top_p": 0.95,
+    "n": 8,
+    "seed": 0,
+    "max_tokens": 4096
+  },
+  "verifier": {
+    "oracle": "n8n-mcp validate_workflow",
+    "profile": "runtime",
+    "db_nodes": 806,
+    "n8n_mcp_version": "2.35.2"
+  },
+  "harness": {
+    "git_sha": "c199a4ba9b364cee0e5e912ba745631ac06f13c6",
+    "vllm_version": "0.15.1",
+    "generated_at_utc": "2026-06-17T01:53:31.755685+00:00"
+  },
+  "hardware": {
+    "role": "Cortex",
+    "gpu": "RTX 4090 24GB",
+    "host": "DREWSPC"
+  },
+  "results": {
+    "valid@1_greedy": {
+      "mean": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "n": 50
+    },
+    "valid@1_sampled": {
+      "mean": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "n": 50
+    },
+    "valid@8_best_of_8": {
+      "mean": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ],
+      "n": 50
+    },
+    "best_of_k": {
+      "1": 0.0,
+      "2": 0.0,
+      "3": 0.0,
+      "4": 0.0,
+      "5": 0.0,
+      "6": 0.0,
+      "7": 0.0,
+      "8": 0.0
+    },
+    "stage_failures": {
+      "greedy": {
+        "parse": 0,
+        "whitelist": 0,
+        "validate": 50,
+        "pass": 0
+      },
+      "sampled_all_draws": {
+        "parse": 19,
+        "whitelist": 0,
+        "validate": 381,
+        "pass": 0
+      }
+    },
+    "validate_error_histogram": {
+      "Node position must be an array with exactly N numbers [x, y]": 1596,
+      "Code cannot be empty": 505,
+      "Connection to non-existent node: \"X\" from \"X\"": 250,
+      "Duplicate node ID: \"X\". Node at index N (name: \"X\", type: \"X\") conflicts with node at index N (name:": 148,
+      "Required property 'URL' cannot be empty": 73,
+      "typeVersion N exceeds maximum supported version N.N": 66,
+      "Invalid value for 'language'. Must be one of: javaScript, pythonNative": 31,
+      "Invalid operation \"X\" for node nNn-nodes-base.googleCalendar. Similar operations: \"X\", \"X\", \"X\"": 21,
+      "Invalid value for 'authentication'. Must be one of: none, predefinedCredentialType, genericCredentia": 19,
+      "Invalid operation \"X\" for node nNn-nodes-base.gmail. Similar operations: \"X\", \"X\", \"X\"": 16,
+      "Invalid operation \"X\" for node nNn-nodes-base.gmail. Similar operations: \"X\", \"X\"": 15,
+      "Invalid operation \"X\" for node nNn-nodes-base.gmail.": 15,
+      "JSON parse failed: Expecting property name enclosed in double quotes: line N column N (char N)": 14,
+      "Invalid operation \"X\" for node nNn-nodes-base.googleCalendar. Similar operations: \"X\"": 14,
+      "Required property 'To' cannot be empty": 14,
+      "Required property 'Subject' cannot be empty": 13,
+      "Filter must have a combinator field": 10,
+      "Node-level properties credentials are in the wrong location. They must be at the node level, not ins": 9,
+      "Invalid value for 'mode'. Must be one of: manual, raw": 8,
+      "Required property 'Message' cannot be empty": 8
+    },
+    "cost": {
+      "greedy_completion_tokens": 36911,
+      "best_of_n_completion_tokens": 309070,
+      "inference_multiplier": 8.37,
+      "greedy_latency_ms": {
+        "count": 50,
+        "min": 12406.0,
+        "mean": 20254.98,
+        "max": 59172.0,
+        "p50": 17765.5,
+        "p95": 32342.45,
+        "p99": 48621.81
+      },
+      "best_of_n_latency_ms": {
+        "count": 50,
+        "min": 15782.0,
+        "mean": 28575.58,
+        "max": 113047.0,
+        "p50": 24398.0,
+        "p95": 51995.4,
+        "p99": 93155.94
+      }
+    }
+  }
+}
