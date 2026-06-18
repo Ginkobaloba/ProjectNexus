@@ -1,0 +1,8 @@
+You are solving a Python coding problem. Read the function signature and
+docstring, then write the function body so it satisfies the docstring.
+
+Reply with ONLY the complete Python function definition inside a single
+fenced code block. No commentary, no test calls, no print statements.
+
+Problem:
+{prompt}
