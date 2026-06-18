@@ -192,20 +192,23 @@ contract observations worth keeping in mind for Sprint 4:
 
 Drew runs this from the 4070 host after the Sprint 3c commit lands.
 
-- [ ] Section A laptop browser passed (A1, A2, A3, A4)
-- [ ] Section B phone browser passed (B1, B2, B3)
-- [ ] Section C CLI passed (C1, C2, C3)
-- [ ] Section D Cortex-down behavior passed (D1, D2, D3, D4, D5)
-- [ ] Section E token revocation passed (E1, E2, E3)
-- [ ] Section F cross-device session continuity passed (F1, F2, F3)
-- [ ] Section G items tried (or intentionally skipped, noted here)
-- [ ] `pytest tests/integration/` run from the 4070 host with the
-  result transcribed back here.
-- [ ] Live-smoke subset run with NEXUS_LIVE_URL and NEXUS_LIVE_TOKEN
-  set, result transcribed back here.
+- [-] Section A laptop browser passed (A1, A2, A3, A4) -- BLOCKED-ON-CARD-2: requires brainstem reachable at `${BRAINSTEM_URL}`; fabric is still dark on the 4070 as of 2026-06-18 (docker compose not running, `docker/.env` missing). Unblocks when Card 2 lands.
+- [-] Section B phone browser passed (B1, B2, B3) -- DEFERRED-ON-TAILSCALE: 4070 Tailscale is in NoState (offline 6 days). Phone path requires Tailscale on both sides. Recovery card carved out per Sprint 3d plan Open Question 3.
+- [-] Section C CLI passed (C1, C2, C3) -- BLOCKED-ON-CARD-2 (same reason as Section A).
+- [-] Section D Cortex-down behavior passed (D1, D2, D3, D4, D5) -- BLOCKED-ON-CARD-2 (same reason as Section A).
+- [-] Section E token revocation passed (E1, E2, E3) -- BLOCKED-ON-CARD-2 (same reason as Section A).
+- [-] Section F cross-device session continuity passed (F1, F2, F3) -- DEFERRED-ON-TAILSCALE (same reason as Section B).
+- [-] Section G items tried (or intentionally skipped, noted here) -- BLOCKED-ON-CARD-2 (same reason as Section A).
+- [x] `pytest tests/integration/` run from the 4070 host with the
+  result transcribed back here. **2026-06-18: 20 passed, 4 skipped (live-smoke), 20 warnings in 7.11s on host BROOKFIELD_PC, branch sprint/3d-stabilize-2026-06-18 @ 3b194355d6abf6a479b5b2792cbd19577fb03ac2, Python 3.13.14. Matches the 2026-05-17 sandbox baseline exactly. Full transcript: `docs/sprints/SPRINT_3d_INTEGRATION_RESULTS_2026-06-18.md`.**
+- [-] Live-smoke subset run with NEXUS_LIVE_URL and NEXUS_LIVE_TOKEN
+  set, result transcribed back here. -- DEFERRED-ON-TAILSCALE-AND-FABRIC: needs both Tailscale up and fabric live to exercise the real wire. Both gated on Card 2 + Tailscale recovery.
 
 Mark each checkbox in this file when done and commit the update. The
 checklist is the audit trail.
+
+Legend: `[x]` complete, `[ ]` open, `[-]` intentionally deferred or
+blocked with reason in line.
 
 ## Sprint 4: bidirectional callback (the fabric differentiator)
 
