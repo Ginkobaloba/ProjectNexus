@@ -157,6 +157,12 @@ data/nas/episodic.jsonl
 # Phase 0 metric harness JSONL sink (regenerated at runtime, not source)
 data/metrics/
 
+# Sprint 3d Card 4 eval bench: results JSONs are regenerated per run;
+# HF dataset cache is local-only. The runner creates both directories on
+# first use, so neither needs to be tracked.
+bench/results/*.json
+bench/eval/datasets/cache/
+
 # If you don’t want episodic logs committed, uncomment:
 # data/nas/episodic.jsonl
 
