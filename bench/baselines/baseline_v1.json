@@ -1,0 +1,319 @@
+{
+  "label": "baseline_v1",
+  "harness_version": "0.1.0",
+  "git_sha": "25bc3d7fc0dec838945964d8a648d5e016d480e2",
+  "timestamp_utc": "2026-06-19T07:12:49Z",
+  "pre_registration": "bench/baselines/pre_registration_v1.md",
+  "host": "DREWSPC (4090 cortex)",
+  "provider": {
+    "kind": "openai_compat",
+    "base_url": "http://localhost:8000/v1",
+    "model": "cyankiwi/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit",
+    "extra": {}
+  },
+  "sampling": {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "max_tokens": 2048,
+    "seed": 0
+  },
+  "tolerances": {
+    "builder_valid_at_1_win_pp": 10.0,
+    "family_6_tolerance_abs_points": 3.0,
+    "non_overlapping_ci_required_over_seeds": 3
+  },
+  "caveats": {
+    "dataset_size": "Builder ran on the 5-example placeholder dataset shipped in PR #7. Statistically thin; bootstrap CIs over 3 seeds will be degenerate when the model is deterministic. Expanding to 50 examples is the n+1 follow-on.",
+    "oracle": "Builder exec_success scored via structural single-trigger reachability simulator, not the n8n MCP validate_workflow oracle, because the n8n MCP container was offline on DREWSPC at run time. The MCP code path is wired, unit-tested, and selectable via NEXUS_BENCH_BUILDER_ORACLE=mcp.",
+    "deterministic_variance": "Temperature 0.0 + seeded vLLM gives identical per-seed completions on this model. Per-seed metric values are identical across seeds, so the bootstrap 95% CI collapses to a point. Wider CIs require either a larger held-out set, nonzero temperature, or both."
+  },
+  "tasks": {
+    "builder": {
+      "primary_metric": "valid_at_1",
+      "stub_placeholder": false,
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "metrics": {
+        "exec_success": {
+          "per_seed": [
+            0.4,
+            0.4,
+            0.4
+          ],
+          "mean": 0.4000000000000001,
+          "ci95": [
+            0.4000000000000001,
+            0.4000000000000001
+          ]
+        },
+        "valid_at_1": {
+          "per_seed": [
+            0.4,
+            0.4,
+            0.4
+          ],
+          "mean": 0.4000000000000001,
+          "ci95": [
+            0.4000000000000001,
+            0.4000000000000001
+          ]
+        }
+      },
+      "n_problems": 5,
+      "dataset_id": null,
+      "dataset_path": "bench\\eval\\datasets\\builder_skeleton_v1.jsonl",
+      "oracle": {
+        "mode": "structural_sim",
+        "n8n_mcp_config": {
+          "base_url": "http://localhost:3000",
+          "token_present": false,
+          "timeout_s": 30.0,
+          "profile": "runtime"
+        },
+        "fallback_documented_at": "bench/eval/tasks/_n8n_oracle.py"
+      },
+      "dataset_caveat": "5-example placeholder; statistically thin. Expand to 50 examples is tracked as Card 5b (n+1 follow-on)."
+    },
+    "code_pub": {
+      "primary_metric": "pass_at_1",
+      "stub_placeholder": false,
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "metrics": {
+        "pass_at_1": {
+          "per_seed": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "mean": 1.0,
+          "ci95": [
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "n_problems": 3,
+      "dataset_id": null,
+      "dataset_path": "C:\\dev\\project-nexus\\bench\\eval\\datasets\\code_pub_skeleton_v1.jsonl"
+    },
+    "routing": {
+      "primary_metric": "routing_top1",
+      "stub_placeholder": true,
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "metrics": {
+        "intent_f1": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "routing_top1": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "n_problems": 1,
+      "dataset_id": null,
+      "dataset_path": null
+    },
+    "tool_use": {
+      "primary_metric": "task_success",
+      "stub_placeholder": true,
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "metrics": {
+        "steps_to_success_delta": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "task_success": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "tool_selection_accuracy": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "n_problems": 1,
+      "dataset_id": null,
+      "dataset_path": null
+    },
+    "rag_qa": {
+      "primary_metric": "answer_correctness",
+      "stub_placeholder": true,
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "metrics": {
+        "answer_correctness": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "groundedness": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "retrieval_recall_at_k": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "n_problems": 1,
+      "dataset_id": null,
+      "dataset_path": null
+    },
+    "guards": {
+      "primary_metric": "guard_aggregate",
+      "stub_placeholder": true,
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "metrics": {
+        "gpqa_diamond": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "guard_aggregate": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "ifeval": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "mmlu_pro": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        },
+        "mt_bench": {
+          "per_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": 0.0,
+          "ci95": [
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "n_problems": 1,
+      "dataset_id": null,
+      "dataset_path": null
+    }
+  }
+}
