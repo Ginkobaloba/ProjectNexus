@@ -4,25 +4,36 @@ Task 1: Builder (workflow synthesis).
 Headline metric per NEXUS_PATH_TO_OUTPERFORM section 1.3:
     valid@1 and exec-success on the Builder held-out set.
 
-This skeleton ships:
+This task ships:
     - the frozen Builder prompt at bench/eval/prompts/builder.txt
     - a 5-example placeholder dataset at
-      bench/eval/datasets/builder_skeleton_v1.jsonl
+      bench/eval/datasets/builder_skeleton_v1.jsonl (the Card 5 baseline runs
+      against this set; the 50-example curated set is the n+1 follow-on)
     - a deterministic verifier chain:
         1. parse fenced JSON out of the completion
         2. validate the schema (name + nodes + connections, dict shape)
         3. validate every node type is in the whitelist
         4. validate every reference in connections points at a real node
         5. validate the spec's `required_nodes` are present
-        6. exec-success: a separate "would this n8n actually run" check;
-           in the skeleton this is a static structural simulator. Card 5+
-           swaps it for the n8n MCP `validate_workflow` oracle.
+        6. exec-success: a separate "would this n8n actually run" check. Two
+           oracle paths:
+             - n8n MCP `validate_workflow` over HTTP Streamable (the canonical
+               oracle per Card 5 Decision 3). Wired in `_n8n_oracle.py`.
+             - Structural single-trigger reachability simulator. Used as the
+               fallback when the n8n MCP is unreachable; the SeedResult flags
+               the active oracle in task_meta so downstream readers can tell
+               which path scored a given run.
 
 Metrics emitted:
     valid_at_1     1.0 if the completion parses + validates + meets required_nodes
-    exec_success   1.0 if valid AND the structural exec sim passes
+    exec_success   1.0 if valid AND the active oracle returns valid=True
 
 Both are 0/1 per problem; the task aggregates them as the per-seed mean.
+
+Override the oracle path explicitly:
+    NEXUS_BENCH_BUILDER_ORACLE=mcp           force MCP (errors if unreachable)
+    NEXUS_BENCH_BUILDER_ORACLE=structural    force structural sim
+    NEXUS_BENCH_BUILDER_ORACLE=auto          (default) probe, then choose
 """
 from __future__ import annotations
 
@@ -33,6 +44,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from ..base import EvalTaskBase, Problem, load_jsonl
+from . import _n8n_oracle
 
 
 HERE = Path(__file__).resolve().parent
@@ -65,10 +77,29 @@ class BuilderTask(EvalTaskBase):
     stub_placeholder = False
     dataset_id = "builder_skeleton_v1"
 
-    def __init__(self, dataset_path: Path = DATASET_PATH, prompt_path: Path = PROMPT_PATH):
+    def __init__(
+        self,
+        dataset_path: Path = DATASET_PATH,
+        prompt_path: Path = PROMPT_PATH,
+        oracle_mode: str | None = None,
+    ):
         self.dataset_path = Path(dataset_path)
         self.prompt_path = Path(prompt_path)
         self._prompt_template: str | None = None
+        self._oracle_cfg = _n8n_oracle.oracle_config_from_env()
+        mode_req = (
+            oracle_mode
+            if oracle_mode is not None
+            else os.environ.get("NEXUS_BENCH_BUILDER_ORACLE", "auto")
+        ).lower()
+        if mode_req == "mcp":
+            self.oracle_mode = "mcp"
+        elif mode_req == "structural" or mode_req == "structural_sim":
+            self.oracle_mode = "structural_sim"
+        else:
+            self.oracle_mode = (
+                "mcp" if _n8n_oracle.is_n8n_mcp_available(self._oracle_cfg) else "structural_sim"
+            )
 
     # -----------------------------------------------------------------
     # EvalTaskBase hooks
@@ -100,11 +131,19 @@ class BuilderTask(EvalTaskBase):
         )
         exec_ok = 0.0
         if valid and parsed_or_none is not None:
-            exec_ok = 1.0 if _structural_exec_sim(parsed_or_none) else 0.0
+            exec_ok = 1.0 if self._exec_oracle(parsed_or_none) else 0.0
         return {
             "valid_at_1": 1.0 if valid else 0.0,
             "exec_success": exec_ok,
         }
+
+    def _exec_oracle(self, parsed: Dict[str, Any]) -> bool:
+        """Dispatch the active oracle. Card 5 Decision 3: MCP is canonical;
+        structural sim is the documented fallback."""
+        if self.oracle_mode == "mcp":
+            ok, _raw = _n8n_oracle.validate_workflow_via_mcp(parsed, self._oracle_cfg)
+            return ok
+        return _structural_exec_sim(parsed)
 
     def task_meta(self) -> Dict[str, Any]:
         meta = super().task_meta()
@@ -112,6 +151,15 @@ class BuilderTask(EvalTaskBase):
         meta["dataset_path"] = os.path.relpath(self.dataset_path, HERE.parent.parent.parent)
         meta["prompt_path"] = os.path.relpath(self.prompt_path, HERE.parent.parent.parent)
         meta["node_whitelist"] = sorted(NODE_WHITELIST)
+        meta["oracle"] = {
+            "mode": self.oracle_mode,
+            "n8n_mcp_config": self._oracle_cfg.to_json_dict(),
+            "fallback_documented_at": "bench/eval/tasks/_n8n_oracle.py",
+        }
+        meta["dataset_caveat"] = (
+            "5-example placeholder; statistically thin. Expand to 50 examples is "
+            "tracked as Card 5b (n+1 follow-on)."
+        )
         return meta
 
 

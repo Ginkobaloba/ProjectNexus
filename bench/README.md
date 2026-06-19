@@ -203,6 +203,44 @@ metric and CI:
 
 Card 5 reads the summary files to build `bench/eval/baseline_v1.json`.
 
+## Builder exec-success oracle (Card 5)
+
+Task 1 has two scorers:
+
+- `valid_at_1` is the deterministic validator chain in `tasks/builder.py`. It
+  is pure and offline.
+- `exec_success` is a separate "would this n8n actually run" check. There are
+  two oracle paths, gated by reachability:
+    - **n8n MCP `validate_workflow`** over HTTP Streamable. Canonical per Card
+      5 Decision 3. Code lives in `bench/eval/tasks/_n8n_oracle.py`. The MCP
+      contract is fixed by `Nexus_N8N-MCP/src/mcp/tools.ts`.
+    - **Structural reachability simulator** (the original sim). Documented
+      fallback when the MCP is unreachable. Permissive by design: a passing
+      structural sim is necessary but not sufficient for true exec success.
+
+The active path is chosen at task construction:
+
+```
+NEXUS_BENCH_BUILDER_ORACLE=auto         # default: probe MCP, fall back to sim
+NEXUS_BENCH_BUILDER_ORACLE=mcp          # force MCP (errors on score if down)
+NEXUS_BENCH_BUILDER_ORACLE=structural   # force the sim
+```
+
+MCP target overrides:
+
+```
+NEXUS_BENCH_N8N_MCP_URL=http://localhost:3000
+NEXUS_BENCH_N8N_MCP_TOKEN=<bearer>
+NEXUS_BENCH_N8N_MCP_TIMEOUT=30.0
+NEXUS_BENCH_N8N_MCP_PROBE_TIMEOUT=2.0
+```
+
+Each `SeedResult.task_meta.oracle.mode` records which path scored that run,
+so downstream readers can tell `structural_sim` runs from `mcp` runs. The
+Card 5 `baseline_v1` shipped with `mode = "structural_sim"` because the n8n
+MCP container was offline on DREWSPC at run time; `baseline_v2` will re-run
+with the MCP up and report the delta.
+
 ## Bootstrap 95% CI
 
 `bench/eval/scoring.py:bootstrap_ci` resamples per-seed values with
