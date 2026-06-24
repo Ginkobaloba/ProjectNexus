@@ -163,6 +163,21 @@ data/metrics/
 bench/results/*.json
 bench/eval/datasets/cache/
 
+# Sprint 3d Card 6 exception: the trackc_bo8_demo_2026-06-24/ folder is the
+# committed reference artifact for the verifier-guided best-of-8 pipeline.
+# It is deterministic (StubProvider) and re-generates byte-for-byte via
+# bench/results/trackc_bo8_demo_2026-06-24/_generate_demo.py, but we keep the
+# JSONs in-tree so PR reviewers can see what the deliverable looks like
+# without running anything.
+# Note: the bare `results/` rule at line ~143 above excludes the whole
+# `bench/results/` directory; per git's "parent-excluded children stay
+# excluded" rule we must un-exclude the parent first, then re-include the
+# demo subtree.
+!bench/results/
+bench/results/*
+!bench/results/trackc_bo8_demo_2026-06-24/
+!bench/results/trackc_bo8_demo_2026-06-24/**
+
 # If you don’t want episodic logs committed, uncomment:
 # data/nas/episodic.jsonl
 

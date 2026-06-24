@@ -1,0 +1,44 @@
+{
+  "run_label": "trackc_bo8_demo",
+  "task_id": "code_pub",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "primary_metric": "pass_at_1",
+  "n_candidates": 8,
+  "metrics": {
+    "pass_at_1": {
+      "per_seed": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean": 1.0,
+      "ci95": [
+        1.0,
+        1.0
+      ]
+    }
+  },
+  "selection_stats": {
+    "totals": {
+      "oracle_pass": 9,
+      "highest_score": 0,
+      "no_valid_candidate": 0
+    },
+    "fractions": {
+      "oracle_pass": 1.0,
+      "highest_score": 0.0,
+      "no_valid_candidate": 0.0
+    }
+  },
+  "cost": {
+    "tokens_prompt_total": 4080,
+    "tokens_completion_total": 516,
+    "latency_p50_s_mean": 0.0,
+    "latency_p95_s_mean": 0.0,
+    "n_candidates_per_problem": 8
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "run_label": "trackc_bo8_demo",
+  "task_id": "code_pub",
+  "seed": 1,
+  "timestamp_utc": "2026-06-24T05:48:02Z",
+  "harness_version": "0.1.0",
+  "git_sha": "f80321f37a093b42265b3a8dde94c8056f602aac",
+  "provider": {
+    "kind": "stub",
+    "base_url": "stub://local",
+    "model": "stub",
+    "extra": {}
+  },
+  "sampling": {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "max_tokens": 2048,
+    "seed": 1
+  },
+  "task_meta": {
+    "stub_placeholder": false,
+    "dataset": "code_pub_skeleton_v1",
+    "primary_metric": "pass_at_1",
+    "secondary_metrics": [],
+    "n_problems": 3,
+    "dataset_path": "C:\\dev\\project-nexus\\bench\\eval\\datasets\\code_pub_skeleton_v1.jsonl",
+    "prompt_path": "C:\\dev\\project-nexus\\bench\\eval\\prompts\\code_pub.txt",
+    "exec_timeout_s": 8.0,
+    "source": "skeleton"
+  },
+  "metrics": {
+    "pass_at_1": 0.0
+  },
+  "per_problem": [
+    {
+      "problem_id": "cp_001",
+      "metrics": {
+        "pass_at_1": 0.0
+      },
+      "completion": "I do not know the answer",
+      "completion_tokens": 6,
+      "prompt_tokens": 57,
+      "latency_s": 0.0,
+      "error": null
+    },
+    {
+      "problem_id": "cp_002",
+      "metrics": {
+        "pass_at_1": 0.0
+      },
+      "completion": "I do not know the answer",
+      "completion_tokens": 6,
+      "prompt_tokens": 59,
+      "latency_s": 0.0,
+      "error": null
+    },
+    {
+      "problem_id": "cp_003",
+      "metrics": {
+        "pass_at_1": 0.0
+      },
+      "completion": "I do not know the answer",
+      "completion_tokens": 6,
+      "prompt_tokens": 54,
+      "latency_s": 0.0,
+      "error": null
+    }
+  ],
+  "aggregate": {
+    "primary_metric": "pass_at_1",
+    "primary_metric_value": 0.0,
+    "tokens_prompt_total": 170,
+    "tokens_completion_total": 18,
+    "latency_p50_s": 0.0,
+    "latency_p95_s": 0.0,
+    "n_problems": 3
+  },
+  "stub_placeholder": false
+}

@@ -18,6 +18,13 @@ import sys
 from pathlib import Path
 from typing import List
 
+from .bestofn import (
+    BestOfNRunner,
+    DEFAULT_BESTOFN_N,
+    DEFAULT_BESTOFN_TEMPERATURE,
+    DEFAULT_BESTOFN_TOP_P,
+)
+from .comparison import build_comparison, write_comparison_artifacts
 from .provider import OpenAICompatProvider, StubProvider, default_provider_from_env
 from .runner import BenchRunner, DEFAULT_RESULTS_DIR
 from .tasks import TASK_REGISTRY, all_task_ids, get_task
@@ -70,6 +77,44 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RESULTS_DIR,
         help=f"output directory (default {DEFAULT_RESULTS_DIR})",
     )
+    # Sprint 3d Card 6: Track C verifier-guided best-of-N.
+    p.add_argument(
+        "--best-of-n",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "if N>0, also run a verifier-guided best-of-N arm at "
+            "--bestofn-temperature, score each candidate via the task's "
+            "score() method, pick the first oracle-pass else highest-score, "
+            "and write a baseline-vs-best-of-N comparison artifact. "
+            f"Sprint plan default: {DEFAULT_BESTOFN_N}"
+        ),
+    )
+    p.add_argument(
+        "--bestofn-temperature",
+        type=float,
+        default=DEFAULT_BESTOFN_TEMPERATURE,
+        help=(
+            f"sampling temperature for the best-of-N arm "
+            f"(default {DEFAULT_BESTOFN_TEMPERATURE}; sprint plan section 4)"
+        ),
+    )
+    p.add_argument(
+        "--bestofn-top-p",
+        type=float,
+        default=DEFAULT_BESTOFN_TOP_P,
+        help=f"top_p for the best-of-N arm (default {DEFAULT_BESTOFN_TOP_P})",
+    )
+    p.add_argument(
+        "--skip-baseline-arm",
+        action="store_true",
+        help=(
+            "skip the greedy baseline arm. Only honored when --best-of-n>0. "
+            "Use when you already have a frozen baseline_v1 and only want to "
+            "add a new best-of-N candidate"
+        ),
+    )
     return p
 
 
@@ -120,23 +165,62 @@ def main(argv: List[str] | None = None) -> int:
         n_bootstrap_resamples=args.bootstrap_resamples,
     )
 
+    bestofn_runner = None
+    if args.best_of_n > 0:
+        bestofn_runner = BestOfNRunner(
+            provider=provider,
+            run_label=args.label,
+            results_dir=args.results_dir,
+            n_candidates=args.best_of_n,
+            temperature=args.bestofn_temperature,
+            top_p=args.bestofn_top_p,
+            max_tokens=args.max_tokens,
+            n_bootstrap_resamples=args.bootstrap_resamples,
+        )
+
     summaries = []
     for tid in task_ids:
         task = get_task(tid)
         print(
             f"[bench.eval] running task={tid} seeds={seeds} stub={getattr(task, 'stub_placeholder', False)}"
         )
-        summary = runner.run_task(task, seeds=seeds)
-        summaries.append(summary)
-        primary = summary.primary_metric
-        block = summary.metrics.get(primary, {})
-        print(
-            f"  primary={primary} mean={block.get('mean', 0.0):.4f} "
-            f"ci95=[{block.get('ci95', [0,0])[0]:.4f}, {block.get('ci95', [0,0])[1]:.4f}]"
-        )
+        baseline_summary = None
+        if not (args.skip_baseline_arm and bestofn_runner is not None):
+            baseline_summary = runner.run_task(task, seeds=seeds)
+            summaries.append(baseline_summary)
+            primary = baseline_summary.primary_metric
+            block = baseline_summary.metrics.get(primary, {})
+            print(
+                f"  baseline primary={primary} mean={block.get('mean', 0.0):.4f} "
+                f"ci95=[{block.get('ci95', [0,0])[0]:.4f}, {block.get('ci95', [0,0])[1]:.4f}]"
+            )
 
-    overall = runner.aggregate_overall(summaries)
-    print(f"[bench.eval] overall summary written: {len(overall['tasks'])} task(s)")
+        if bestofn_runner is not None:
+            # Need a fresh task instance for the best-of-N arm so any cached
+            # state (like the lazily loaded prompt template) is shared by
+            # convention but no per-arm cross-talk happens.
+            bo_task = get_task(tid)
+            bo_summary = bestofn_runner.run_task(bo_task, seeds=seeds)
+            primary = bo_summary.primary_metric
+            block = bo_summary.metrics.get(primary, {})
+            print(
+                f"  best-of-{args.best_of_n} primary={primary} mean={block.get('mean', 0.0):.4f} "
+                f"ci95=[{block.get('ci95', [0,0])[0]:.4f}, {block.get('ci95', [0,0])[1]:.4f}]"
+            )
+            if baseline_summary is not None:
+                comp = build_comparison(baseline_summary, bo_summary)
+                paths = write_comparison_artifacts(comp, args.results_dir)
+                print(
+                    f"  comparison lift={comp.lift_abs_pp:+.2f}pp "
+                    f"non_overlap_ci={comp.non_overlapping_ci} "
+                    f"cost_mult={comp.cost_multiplier:.0f}x"
+                )
+                print(f"  chart: {paths['svg']}")
+
+    overall = runner.aggregate_overall(summaries) if summaries else {"tasks": {}}
+    print(
+        f"[bench.eval] overall summary written: {len(overall.get('tasks', {}))} task(s)"
+    )
     return 0
 
 

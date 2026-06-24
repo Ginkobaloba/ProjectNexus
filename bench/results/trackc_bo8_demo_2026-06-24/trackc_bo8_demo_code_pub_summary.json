@@ -1,0 +1,26 @@
+{
+  "run_label": "trackc_bo8_demo",
+  "task_id": "code_pub",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "metrics": {
+    "pass_at_1": {
+      "per_seed": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "mean": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ]
+    }
+  },
+  "primary_metric": "pass_at_1",
+  "stub_placeholder": false,
+  "notes": ""
+}
