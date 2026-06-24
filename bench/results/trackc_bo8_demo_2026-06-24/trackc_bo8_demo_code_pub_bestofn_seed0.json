@@ -1,0 +1,353 @@
+{
+  "run_label": "trackc_bo8_demo",
+  "task_id": "code_pub",
+  "seed": 0,
+  "timestamp_utc": "2026-06-24T05:48:02Z",
+  "harness_version": "0.1.0",
+  "git_sha": "f80321f37a093b42265b3a8dde94c8056f602aac",
+  "provider": {
+    "kind": "stub",
+    "base_url": "stub://local",
+    "model": "stub",
+    "extra": {}
+  },
+  "sampling": {
+    "temperature": 0.8,
+    "top_p": 0.95,
+    "max_tokens": 2048,
+    "seed": 0
+  },
+  "n_candidates": 8,
+  "task_meta": {
+    "stub_placeholder": false,
+    "dataset": "code_pub_skeleton_v1",
+    "primary_metric": "pass_at_1",
+    "secondary_metrics": [],
+    "n_problems": 3,
+    "dataset_path": "C:\\dev\\project-nexus\\bench\\eval\\datasets\\code_pub_skeleton_v1.jsonl",
+    "prompt_path": "C:\\dev\\project-nexus\\bench\\eval\\prompts\\code_pub.txt",
+    "exec_timeout_s": 8.0,
+    "source": "skeleton"
+  },
+  "primary_metric": "pass_at_1",
+  "per_problem": [
+    {
+      "problem_id": "cp_001",
+      "candidates": [
+        {
+          "candidate_idx": 0,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 57,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 1,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 57,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 2,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 57,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 3,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 57,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 4,
+          "completion": "```python\ndef add(a, b):\n    return a + b\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 57,
+          "completion_tokens": 9,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 5,
+          "completion": "```python\ndef add(a, b):\n    return a + b\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 57,
+          "completion_tokens": 9,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 6,
+          "completion": "```python\ndef add(a, b):\n    return a + b\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 57,
+          "completion_tokens": 9,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 7,
+          "completion": "```python\ndef add(a, b):\n    return a + b\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 57,
+          "completion_tokens": 9,
+          "latency_s": 0.0,
+          "error": null
+        }
+      ],
+      "picked_idx": 4,
+      "picked_reason": "oracle_pass",
+      "primary_metric_value": 1.0,
+      "primary_metric_name": "pass_at_1",
+      "selected_metrics": {
+        "pass_at_1": 1.0
+      }
+    },
+    {
+      "problem_id": "cp_002",
+      "candidates": [
+        {
+          "candidate_idx": 0,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 59,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 1,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 59,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 2,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 59,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 3,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 59,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 4,
+          "completion": "```python\ndef is_even(n):\n    return n % 2 == 0\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 59,
+          "completion_tokens": 10,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 5,
+          "completion": "```python\ndef is_even(n):\n    return n % 2 == 0\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 59,
+          "completion_tokens": 10,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 6,
+          "completion": "```python\ndef is_even(n):\n    return n % 2 == 0\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 59,
+          "completion_tokens": 10,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 7,
+          "completion": "```python\ndef is_even(n):\n    return n % 2 == 0\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 59,
+          "completion_tokens": 10,
+          "latency_s": 0.0,
+          "error": null
+        }
+      ],
+      "picked_idx": 4,
+      "picked_reason": "oracle_pass",
+      "primary_metric_value": 1.0,
+      "primary_metric_name": "pass_at_1",
+      "selected_metrics": {
+        "pass_at_1": 1.0
+      }
+    },
+    {
+      "problem_id": "cp_003",
+      "candidates": [
+        {
+          "candidate_idx": 0,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 54,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 1,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 54,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 2,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 54,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 3,
+          "completion": "I do not know the answer",
+          "metrics": {
+            "pass_at_1": 0.0
+          },
+          "prompt_tokens": 54,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 4,
+          "completion": "```python\ndef reverse_string(s):\n    return s[::-1]\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 54,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 5,
+          "completion": "```python\ndef reverse_string(s):\n    return s[::-1]\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 54,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 6,
+          "completion": "```python\ndef reverse_string(s):\n    return s[::-1]\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 54,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        },
+        {
+          "candidate_idx": 7,
+          "completion": "```python\ndef reverse_string(s):\n    return s[::-1]\n```",
+          "metrics": {
+            "pass_at_1": 1.0
+          },
+          "prompt_tokens": 54,
+          "completion_tokens": 6,
+          "latency_s": 0.0,
+          "error": null
+        }
+      ],
+      "picked_idx": 4,
+      "picked_reason": "oracle_pass",
+      "primary_metric_value": 1.0,
+      "primary_metric_name": "pass_at_1",
+      "selected_metrics": {
+        "pass_at_1": 1.0
+      }
+    }
+  ],
+  "aggregate": {
+    "primary_metric": "pass_at_1",
+    "primary_metric_value": 1.0,
+    "metrics": {
+      "pass_at_1": 1.0
+    },
+    "n_problems": 3,
+    "n_candidates_total": 24,
+    "tokens_prompt_total": 1360,
+    "tokens_completion_total": 172,
+    "latency_p50_s": 0.0,
+    "latency_p95_s": 0.0,
+    "picked_reason_counts": {
+      "oracle_pass": 3,
+      "highest_score": 0,
+      "no_valid_candidate": 0
+    }
+  }
+}

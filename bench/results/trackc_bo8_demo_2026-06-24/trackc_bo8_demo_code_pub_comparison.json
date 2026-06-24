@@ -1,0 +1,24 @@
+{
+  "run_label": "trackc_bo8_demo",
+  "task_id": "code_pub",
+  "primary_metric": "pass_at_1",
+  "baseline": {
+    "mean": 0.0,
+    "ci95": [
+      0.0,
+      0.0
+    ]
+  },
+  "bestofn": {
+    "n_candidates": 8,
+    "mean": 1.0,
+    "ci95": [
+      1.0,
+      1.0
+    ]
+  },
+  "lift_abs_pp": 100.0,
+  "non_overlapping_ci": true,
+  "cost_multiplier": 8.0,
+  "notes": "Demo run: StubProvider, code_pub skeleton dataset (3 problems). Real cortex runs against the 4090 produce the same artifact shape with the actual base-model numbers. See docs/sprints/SPRINT_3d_BENCH_PLAN_2026-06-21.md."
+}
