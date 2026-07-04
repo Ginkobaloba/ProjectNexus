@@ -69,7 +69,7 @@ NODE_4070 = {
 }
 NODE_4090 = {
     "id": "cortex_4090",
-    "name": "DREWSPC (RTX 4090)",
+    "name": "<HOST> (RTX 4090)",
     "role": "heavy inference / cortex",
 }
 DASHBOARD_HTML = Path(__file__).parent / "dashboard.html"

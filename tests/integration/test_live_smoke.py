@@ -7,7 +7,7 @@ NOT run by default in CI, because they need the 4070 stack to be up.
 
 To run from the 4070 host or any Tailscale-connected device:
 
-    NEXUS_LIVE_URL=http://100.89.210.52:5001 \
+    NEXUS_LIVE_URL=http://<TAILSCALE_IP>:5001 \
     NEXUS_LIVE_TOKEN=nxs_xxx \
     pytest tests/integration/test_live_smoke.py -v
 

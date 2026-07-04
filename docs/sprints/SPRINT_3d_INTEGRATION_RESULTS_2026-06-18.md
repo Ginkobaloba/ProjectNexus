@@ -147,7 +147,7 @@ To tick the remaining boxes, in dependency order:
 2. **Card 2 fabric bring-up on 4070**: install Docker if not present, run `scripts/setup/refresh-tailscale-bind.ps1` to mint a fresh `docker/.env`, `docker compose up -d`, confirm `/health` returns 200 on LAN at `http://192.168.1.251:5001/health`.
 3. **Tailscale recovery on 4070**: `tailscale up` on the 4070 host, either interactive browser-auth or with a fresh `--authkey` from the Tailscale admin console. The Windows Tailscale service is Running but stuck in NoState as of this run.
 4. **Card 3 manual run**: with the fabric live and Tailscale up, Drew walks Sections A through G of `docs/manual_integration_test_plan.md`, ticks the boxes in the handoff.
-5. **Card 3 live-smoke**: `NEXUS_LIVE_URL=http://100.89.210.52:5001 NEXUS_LIVE_TOKEN=<minted> python -m pytest tests/integration/test_live_smoke.py -v` from any Tailscale-connected host.
+5. **Card 3 live-smoke**: `NEXUS_LIVE_URL=http://<TAILSCALE_IP>:5001 NEXUS_LIVE_TOKEN=<minted> python -m pytest tests/integration/test_live_smoke.py -v` from any Tailscale-connected host.
 
 Once 2 through 5 are done, the remaining `[-]` rows in the handoff turn into `[x]` rows and Card 3 is fully closed.
 

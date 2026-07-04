@@ -14,8 +14,8 @@ This sprint is specifically NOT a Sprint 4 sprint. The bidirectional callback de
 ## 2. Ground truth as of 2026-06-18 (live, not audited)
 
 Verified at plan-write time:
-- 4090 (DREWSPC) cortex: LIVE. vLLM serving `cyankiwi/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit`, OpenAI-compatible on :8000, `max_model_len=8192`, idle.
-- 4070 (BROOKFIELD) host: LAN-reachable (192.168.1.251 pings). Tailscale: OFFLINE (100.89.210.52 does not respond). Brainstem + NAS + embedder containers: not running.
+- 4090 (<HOST>) cortex: LIVE. vLLM serving `cyankiwi/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit`, OpenAI-compatible on :8000, `max_model_len=8192`, idle.
+- 4070 (BROOKFIELD) host: LAN-reachable (192.168.1.251 pings). Tailscale: OFFLINE (<TAILSCALE_IP> does not respond). Brainstem + NAS + embedder containers: not running.
 - main branch: contains all of Sprint 3a/3b/3c. `foundation/consolidation` is fully merged in. The 2026-06-16 state audit's "21 commits ahead" is stale.
 - Sprint 3d work: committed on `sprint/3d-stabilize-2026-06-18` as of today, awaiting PR + merge.
 - Track C best-of-8 harness: committed on `track-c/builder-best-of-n-eval` as `645e0c4`, 1 commit ahead of main, never run end-to-end.
@@ -39,7 +39,7 @@ Each card carries: owner-model (which model class executes), dependencies (which
 - Owner-model: Sonnet for the docker-compose + .env + script work; Drew or a runner agent for the actual host-side bring-up since the 4070 is intermittently available.
 - Dependencies: Card 1 merged so the docker config and refresh-tailscale-bind.ps1 are on main.
 - Hardware: 4070 BROOKFIELD. LAN path requires only that the host is powered (verified). Tailscale path requires `tailscale up` on the 4070 host (currently failing per ping).
-- Acceptance: `docker compose up -d` brings brainstem (:5001) + nas (:5002) + embedder online on the 4070. `/health` returns 200 on LAN. Separately, Tailscale reachability restored, `/health` returns 200 over Tailscale at `http://100.89.210.52:5001`. If the Tailscale half cannot be fixed this sprint, the LAN half still ships and the Tailscale piece becomes its own card.
+- Acceptance: `docker compose up -d` brings brainstem (:5001) + nas (:5002) + embedder online on the 4070. `/health` returns 200 on LAN. Separately, Tailscale reachability restored, `/health` returns 200 over Tailscale at `http://<TAILSCALE_IP>:5001`. If the Tailscale half cannot be fixed this sprint, the LAN half still ships and the Tailscale piece becomes its own card.
 - Conflict surface: low. Touches the 4070 only. The 4090 cortex is unaffected.
 
 ### Card 3: Run the Sprint 3d manual integration test plan against the live fabric
@@ -110,9 +110,9 @@ The cost axis matters separately: a candidate that matches base quality but cuts
 
 | Hardware | Status | Cards that require it |
 |---|---|---|
-| 4090 (DREWSPC) cortex on :8000 | LIVE, idle | 5, 6, 7 (Chunk B if/when it ships), 8 (read-only refs) |
+| 4090 (<HOST>) cortex on :8000 | LIVE, idle | 5, 6, 7 (Chunk B if/when it ships), 8 (read-only refs) |
 | 4070 (BROOKFIELD) LAN (192.168.1.251) | LAN-reachable | 2, 3 (full automated suite and Sections A/C/D/E/G), 7 (none directly, but the Chunk B card following 7 will) |
-| 4070 (BROOKFIELD) Tailscale (100.89.210.52) | OFFLINE | 3 Section B (phone over Tailscale), 3 Section F (cross-device), the off-LAN visible-win demo |
+| 4070 (BROOKFIELD) Tailscale (<TAILSCALE_IP>) | OFFLINE | 3 Section B (phone over Tailscale), 3 Section F (cross-device), the off-LAN visible-win demo |
 | Developer machine (any) | n/a | 1, 4 skeleton work, 7 unit tests, 8 |
 | Phone, laptop | n/a | 3 Section B (phone needs Tailscale), Section A (laptop, LAN or Tailscale) |
 

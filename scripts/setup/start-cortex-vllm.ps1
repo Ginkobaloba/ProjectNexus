@@ -1,5 +1,5 @@
 # start-cortex-vllm.ps1
-# Brings up the Cortex inference service on the 4090 box (DREWSPC, 192.168.1.140).
+# Brings up the Cortex inference service on the 4090 box (<HOST>, 192.168.1.140).
 #
 # Serves cyankiwi/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit via vLLM in the
 # `qwen-vllm` Docker container, OpenAI-compatible API on 0.0.0.0:8000.

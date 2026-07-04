@@ -11,19 +11,19 @@ Companion to: `docs/sprints/SPRINT_3d_PLAN_2026-06-18.md` (the plan of record), 
 The fabric is up. From the 4090:
 
 ```
-$ curl -s http://100.89.210.52:5001/health
+$ curl -s http://<TAILSCALE_IP>:5001/health
 {"status":"ok","embedder_reachable":true,"stm_size":0}
 ```
 
-That is a brainstem on the 4070 (Tailscale IP 100.89.210.52), answering on its Tailscale-bound port, reporting the embedder reachable and the per-session STM live. The closed loop that the 2026-06-16 audit called "no closed loop today" is closed.
+That is a brainstem on the 4070 (Tailscale IP <TAILSCALE_IP>), answering on its Tailscale-bound port, reporting the embedder reachable and the per-session STM live. The closed loop that the 2026-06-16 audit called "no closed loop today" is closed.
 
 What changed since the 2026-06-16 audit and the 2026-06-18 Card 3 hand-off:
 
 | Surface | Before (2026-06-18) | After (this PR) |
 |---|---|---|
-| 4070 Tailscale | Daemon stuck in `NoState`, offline 6 days | Online, IP 100.89.210.52, hostname `brookfield-4070`, unattended-mode |
+| 4070 Tailscale | Daemon stuck in `NoState`, offline 6 days | Online, IP <TAILSCALE_IP>, hostname `brookfield-4070`, unattended-mode |
 | 4070 Docker Desktop | Off, no daemon | Running, Engine 28.5.1, Compose v2.40.3 |
-| `docker/.env` | Missing | Present, `BRAINSTEM_BIND_HOST=100.89.210.52` |
+| `docker/.env` | Missing | Present, `BRAINSTEM_BIND_HOST=<TAILSCALE_IP>` |
 | brainstem container | Down | Up, healthy, published on Tailscale IP only |
 | nas container | Down | Up |
 | embedder container | Down | Up, embedder reachable from brainstem |
@@ -72,12 +72,12 @@ From the 4090:
 
 ```
 > tailscale status | findstr brookfield-4070
-100.89.210.52  brookfield-4070  dramattick1@  windows  -
+<TAILSCALE_IP>  brookfield-4070  dramattick1@  windows  -
 
-> ping -n 3 100.89.210.52
-Reply from 100.89.210.52: bytes=32 time=5ms TTL=128
-Reply from 100.89.210.52: bytes=32 time=8ms TTL=128
-Reply from 100.89.210.52: bytes=32 time=56ms TTL=128
+> ping -n 3 <TAILSCALE_IP>
+Reply from <TAILSCALE_IP>: bytes=32 time=5ms TTL=128
+Reply from <TAILSCALE_IP>: bytes=32 time=8ms TTL=128
+Reply from <TAILSCALE_IP>: bytes=32 time=56ms TTL=128
 
 avg 23ms, 0 percent loss
 ```
@@ -137,11 +137,11 @@ Docker Compose version v2.40.3-desktop.1
 
 ### 4.2 What fixed it
 
-`scripts/setup/refresh-tailscale-bind.ps1` queries `tailscale ip -4`, filters for a `100.x.x.x` Tailscale CGNAT address, and writes `BRAINSTEM_BIND_HOST=<that ip>` into `docker/.env`. After Phase 1, `tailscale ip -4` returns `100.89.210.52`, so the script produces:
+`scripts/setup/refresh-tailscale-bind.ps1` queries `tailscale ip -4`, filters for a `100.x.x.x` Tailscale CGNAT address, and writes `BRAINSTEM_BIND_HOST=<that ip>` into `docker/.env`. After Phase 1, `tailscale ip -4` returns `<TAILSCALE_IP>`, so the script produces:
 
 ```
 # docker/.env (35 bytes)
-BRAINSTEM_BIND_HOST=100.89.210.52
+BRAINSTEM_BIND_HOST=<TAILSCALE_IP>
 ```
 
 ### 4.3 Gotcha: param default
@@ -211,7 +211,7 @@ From the 4070:
 ```
 > docker compose ps
 NAME             SERVICE     STATUS                    PORTS
-brainstem_4070   brainstem   Up 26 seconds (healthy)   100.89.210.52:5001->5001/tcp
+brainstem_4070   brainstem   Up 26 seconds (healthy)   <TAILSCALE_IP>:5001->5001/tcp
 embedder_4070   embedder    Up 26 seconds             0.0.0.0:5003->5003/tcp, [::]:5003->5003/tcp
 nas_memory       nas         Up 26 seconds             0.0.0.0:5002->5002/tcp, [::]:5002->5002/tcp
 
@@ -225,12 +225,12 @@ INFO:     127.0.0.1:33178 - "GET /health HTTP/1.1" 200 OK
 
 The "(healthy)" status on brainstem_4070 is the compose-defined healthcheck (a Python `urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=3)` that demands HTTP 200) succeeding.
 
-The Tailscale-bound publish (`100.89.210.52:5001->5001/tcp`) is exactly what Sprint 3c's exposure design intended: only Tailscale peers can reach :5001. The brainstem is not accidentally publishing on `0.0.0.0`.
+The Tailscale-bound publish (`<TAILSCALE_IP>:5001->5001/tcp`) is exactly what Sprint 3c's exposure design intended: only Tailscale peers can reach :5001. The brainstem is not accidentally publishing on `0.0.0.0`.
 
 From the 4090, over Tailscale:
 
 ```
-> Invoke-WebRequest http://100.89.210.52:5001/health -UseBasicParsing
+> Invoke-WebRequest http://<TAILSCALE_IP>:5001/health -UseBasicParsing
 StatusCode        : 200
 Content           : {"status":"ok","embedder_reachable":true,"stm_size":0}
 ```
@@ -249,9 +249,9 @@ That is the actual cross-host smoke test the audit said the fabric had never pas
 | HANDOFF Section D (Cortex-down) | BLOCKED-ON-CARD-2 | Ready to run |
 | HANDOFF Section E (token revocation) | BLOCKED-ON-CARD-2 | Ready to run |
 | HANDOFF Section F (cross-device continuity) | DEFERRED-ON-TAILSCALE | Ready to run |
-| `pytest` `tests/integration/` live-smoke (NEXUS_LIVE_URL=http://100.89.210.52:5001) | DEFERRED-ON-TAILSCALE-AND-FABRIC | Ready to run |
+| `pytest` `tests/integration/` live-smoke (NEXUS_LIVE_URL=http://<TAILSCALE_IP>:5001) | DEFERRED-ON-TAILSCALE-AND-FABRIC | Ready to run |
 
-The four `test_live_smoke.py` tests that PR #8 marked SKIPPED for lack of a live wire can now be run by exporting `NEXUS_LIVE_URL=http://100.89.210.52:5001` and a valid `NEXUS_LIVE_TOKEN` and re-running `python -m pytest tests/integration/test_live_smoke.py -v`. That is a separate card; this PR just unblocks it.
+The four `test_live_smoke.py` tests that PR #8 marked SKIPPED for lack of a live wire can now be run by exporting `NEXUS_LIVE_URL=http://<TAILSCALE_IP>:5001` and a valid `NEXUS_LIVE_TOKEN` and re-running `python -m pytest tests/integration/test_live_smoke.py -v`. That is a separate card; this PR just unblocks it.
 
 ## 7. If it breaks again: the runbook
 
@@ -280,8 +280,8 @@ schtasks /Run /TN NexusComposeUp
 # poll: presence of C:\dev\_resume_4070\compose_up.done
 
 # 5. Verify from the 4090
-ping 100.89.210.52
-Invoke-WebRequest http://100.89.210.52:5001/health -UseBasicParsing
+ping <TAILSCALE_IP>
+Invoke-WebRequest http://<TAILSCALE_IP>:5001/health -UseBasicParsing
 ```
 
 The authkey itself should never be logged, never written to a committed file, and only ever read from `C:\dev\_secrets\tailscale_auth_token.local.txt` at the moment of use.

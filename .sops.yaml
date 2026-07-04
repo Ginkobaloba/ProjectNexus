@@ -2,7 +2,7 @@
 # Multiple recipients = multiple decrypters. Add each new host's public key to the
 # `age:` list when the cluster grows (e.g. when the 4070 comes back online).
 #
-# Current recipients: 4090 host (Drama@DREWSPC).
+# Current recipients: 4090 host (Drama@<HOST>).
 #
 # Daily commands:
 #   sops --encrypt --in-place automation/.env      # encrypt a freshly edited plaintext

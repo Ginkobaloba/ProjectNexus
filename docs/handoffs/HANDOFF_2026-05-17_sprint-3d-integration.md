@@ -141,7 +141,7 @@ or you override them as shown.
 To run the live-smoke subset against the running 4070 stack:
 
 ```
-NEXUS_LIVE_URL=http://100.89.210.52:5001 \
+NEXUS_LIVE_URL=http://<TAILSCALE_IP>:5001 \
   NEXUS_LIVE_TOKEN=nxs_xxx \
   python -m pytest tests/integration/test_live_smoke.py -v
 ```

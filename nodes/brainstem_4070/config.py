@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     embedder_timeout: float = 30.0
 
     # --Cortex-- 4090 heavy-inference peer (vLLM, OpenAI-compatible API).
-    # LAN address of DREWSPC. Override with BRAINSTEM_CORTEX_URL if needed.
+    # LAN address of <HOST>. Override with BRAINSTEM_CORTEX_URL if needed.
     cortex_url: str = "http://192.168.1.140:8000"
     # Per-request timeout (seconds) for generation calls to Cortex.
     cortex_timeout: float = 120.0

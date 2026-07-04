@@ -68,7 +68,7 @@ The bootstrap is over the per-seed mean. When temperature is 0.0 and the per-see
 
 | Task | Oracle | Notes |
 |---|---|---|
-| `builder` | `_n8n_oracle.py` (`mcp` mode) or `_structural_exec_sim` (default) | The n8n MCP path is wired and unit-tested; flip via `NEXUS_BENCH_BUILDER_ORACLE=mcp` when the n8n MCP container is up on DREWSPC. baseline_v1 ran on `structural_sim` because the MCP container was offline; baseline_v2 should re-run on `mcp` once it is up |
+| `builder` | `_n8n_oracle.py` (`mcp` mode) or `_structural_exec_sim` (default) | The n8n MCP path is wired and unit-tested; flip via `NEXUS_BENCH_BUILDER_ORACLE=mcp` when the n8n MCP container is up on <HOST>. baseline_v1 ran on `structural_sim` because the MCP container was offline; baseline_v2 should re-run on `mcp` once it is up |
 | `code_pub` | `_run_unit_test` (subprocess, Python `-c`) | Wall-clock timeout per problem (default 8s); no network; the sandbox is not hardened, callers control inputs |
 | Stubs | None | Stubs return zeros and set `stub_placeholder=True` |
 

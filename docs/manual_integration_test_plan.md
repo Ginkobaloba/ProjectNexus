@@ -31,7 +31,7 @@ Before you run this plan, confirm:
 Throughout this plan:
 
 - `${BRAINSTEM_URL}` is the Tailscale URL of the brainstem
-  (e.g. `http://100.89.210.52:5001`).
+  (e.g. `http://<TAILSCALE_IP>:5001`).
 - `${LAPTOP_TOKEN}` and `${PHONE_TOKEN}` are the two tokens you just
   minted. Tokens never leave the device they were issued on; do not
   paste them into a chat window or commit them.
