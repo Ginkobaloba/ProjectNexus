@@ -60,6 +60,10 @@ class EmbedderClient:
         assistant_text: str,
         turn_idx: int,
         ts: str,
+        scope: str,
+        member_id: str,
+        origin: str = "conversation",
+        participants: Optional[List[str]] = None,
         model_used: str = "",
         user_token_count: int = 0,
         assistant_token_count: int = 0,
@@ -71,6 +75,10 @@ class EmbedderClient:
             "assistant_text": assistant_text,
             "turn_idx": turn_idx,
             "ts": ts,
+            "scope": scope,
+            "member_id": member_id,
+            "origin": origin,
+            "participants": participants or [],
             "model_used": model_used,
             "user_token_count": user_token_count,
             "assistant_token_count": assistant_token_count,
@@ -83,11 +91,12 @@ class EmbedderClient:
         self,
         session_id: str,
         query: str,
+        member_id: str,
         k: int = 5,
         session_id_filter: Optional[str] = None,
         exclude_parent_turn_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"query": query, "k": k}
+        payload: Dict[str, Any] = {"query": query, "k": k, "member_id": member_id}
         if session_id_filter:
             payload["session_id_filter"] = session_id_filter
         if exclude_parent_turn_id:

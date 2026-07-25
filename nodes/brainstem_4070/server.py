@@ -347,14 +347,12 @@ def generate(
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
     auth: TokenEntry = Depends(require_token),
 ):
-    """Relay a prompt to the 4090 Cortex, retrieve-before-generate
-    against the `memory` collection, write the completed turn back, and
-    return the generated text.
+    """Relay a prompt to the 4090 Cortex, retrieve-before-generate,
+    write the completed turn back, and return the generated text.
 
     Sprint 2 Chunk B added the retrieval leg in front of the Cortex call.
     The retrieved turns are merged into the system prompt sent to Cortex.
-    Retrieval is NOT scoped to the current session by default, which is
-    the whole point of the cross-session done-criterion.
+    Cross-session recall within a member is preserved.
 
     Sprint 3b: auth is required. The validated token entry is available
     as `auth`; its name is logged and written to the metric record for
@@ -365,9 +363,27 @@ def generate(
     `message`, `session_id`, and `turn_idx` fields, plus a `Retry-After`
     header. Memory writes are skipped in that case (no assistant text to
     embed). See docs/exposure_and_cortex_down.md for the contract.
+
+    Sprint 5 Card 3: this legacy endpoint now runs as the hub's default
+    member (the registry's first entry), so its turns land in that
+    member's private scope and its retrieval sees that member's visible
+    scopes. Unscoped memory no longer exists. Member-aware callers
+    should use /members/{id}/chat instead.
     """
     session_id = _resolve_session_id(x_session_id)
+    return _run_turn(req, session_id=session_id, auth=auth,
+                     member=family_registry.members[0])
 
+
+def _run_turn(
+    req: GenerateRequest,
+    session_id: str,
+    auth: TokenEntry,
+    member,
+):
+    """The full turn pipeline (retrieve -> cortex -> write-on-turn ->
+    metrics) for a specific family member. Shared by the legacy
+    /generate endpoint and /members/{id}/chat (Card 2)."""
     t_ingress = now_ns()
     payload_bytes = len((req.prompt or "").encode("utf-8"))
     if req.system:
@@ -383,6 +399,7 @@ def generate(
         rres = embedder.memory_query(
             session_id=session_id,
             query=req.prompt,
+            member_id=member.id,
             k=RETRIEVAL_K,
         )
         matches = rres.get("matches", []) or []
@@ -425,6 +442,12 @@ def generate(
                 assistant_text=(result or {}).get("text", ""),
                 turn_idx=turn_idx,
                 ts=datetime.now(timezone.utc).isoformat(),
+                # Card 3: conversation turns default to the member's
+                # private scope; sharing is a promotion, never a write.
+                scope=f"private:{member.id}",
+                member_id=member.id,
+                origin="conversation",
+                participants=[auth.name],
                 model_used=(result or {}).get("model", ""),
                 user_token_count=usage.get("prompt_tokens", 0) or 0,
                 assistant_token_count=usage.get("completion_tokens", 0) or 0,
@@ -479,6 +502,7 @@ def generate(
             "memory_written": memory_written,
             "memory_chunks": memory_chunks,
             "token_name": auth.name,
+            "member_id": member.id,
             "error": err,
         },
     )
@@ -723,15 +747,16 @@ def member_chat(
         else float(member.runtime.sampling_defaults.get("temperature", 0.7))
     )
 
-    result = generate(
+    result = _run_turn(
         GenerateRequest(
             prompt=req.prompt,
             system=effective_system,
             max_tokens=req.max_tokens,
             temperature=temperature,
         ),
-        x_session_id=session_id,
+        session_id=session_id,
         auth=auth,
+        member=member,
     )
     if isinstance(result, JSONResponse):
         # Cortex-down 503: pass the Sprint 3c contract through unchanged.

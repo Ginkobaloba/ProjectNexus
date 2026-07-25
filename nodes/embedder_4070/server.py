@@ -16,7 +16,16 @@ API:
   GET  /health
   POST /embed         -- raw embedding for legacy callers (proxy target)
   POST /memory/write  -- write a completed turn (chunks if needed)
-  POST /memory/query  -- top-k retrieval (no default session filter)
+  POST /memory/query  -- top-k retrieval, scope-filtered per member
+
+Sprint 5 Card 3: every write carries scope/member_id/origin provenance
+and every query is filtered server-side to the querying member's
+visible scopes (private:<member> + shared:household +
+experiential:<member>). Cross-member recall is structurally impossible
+through this API; cross-session recall within a member is unchanged.
+Pre-scope rows are invisible to queries until
+scripts/migrate_memory_scopes.py grandfathers them into member #1's
+private scope.
 """
 from __future__ import annotations
 
@@ -28,6 +37,7 @@ from pydantic import BaseModel, Field
 
 from .config import settings
 from . import chroma_store
+from . import scopes
 from .chunker import chunk_turn
 from .embed import dim, embed_texts, get_model, tokenize
 
@@ -41,7 +51,7 @@ app = FastAPI(
         "container from the brainstem for clean lifecycle and a "
         "swappable model boundary."
     ),
-    version="0.1.0",
+    version="0.2.0",
 )
 
 
@@ -67,6 +77,12 @@ class MemoryWriteRequest(BaseModel):
     assistant_token_count: int = 0
     source_service: str = ""
     tool_calls_present: bool = False
+    # Sprint 5 Card 3 provenance. scope + member_id are mandatory —
+    # unscoped rows must never exist again after the migration.
+    scope: str
+    member_id: str
+    origin: str = "conversation"
+    participants: List[str] = Field(default_factory=list)
 
 
 class MemoryWriteResponse(BaseModel):
@@ -78,9 +94,12 @@ class MemoryWriteResponse(BaseModel):
 class MemoryQueryRequest(BaseModel):
     query: str
     k: int = 5
-    # Optional metadata filters. By default we do NOT scope to the
-    # caller's session, because the Sprint 2 done-criterion is
-    # cross-session recall. Filtering is opt-in.
+    # Sprint 5 Card 3: the querying member. Mandatory — the scope
+    # filter derived from it is applied server-side on every query.
+    # (Amends Sprint 2's no-filter design: cross-session recall within
+    # a member is preserved; cross-member recall is forbidden.)
+    member_id: str
+    # Optional refinements inside the member's visible scopes.
     session_id_filter: Optional[str] = None
     exclude_parent_turn_id: Optional[str] = None
 
@@ -154,6 +173,15 @@ def memory_write(
     session_id = _resolve_session_id(x_session_id)
     parent_turn_id = f"{session_id}:{req.turn_idx}"
 
+    # Card 3: refuse writes that would break the scope rules — a member
+    # cannot write into another member's scopes, and every row must
+    # carry a known origin.
+    try:
+        scopes.validate_write_scope(req.scope, req.member_id)
+        scopes.validate_origin(req.origin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     body = _concatenate_turn(req.user_text, req.assistant_text)
 
     chunks = chunk_turn(
@@ -187,6 +215,12 @@ def memory_write(
             "chunk_idx": idx,
             "chunk_total": total,
             "parent_turn_id": parent_turn_id,
+            # Card 3 provenance (participants is comma-joined because
+            # Chroma metadata values must be scalars).
+            "scope": req.scope,
+            "member_id": req.member_id,
+            "origin": req.origin,
+            "participants": scopes.participants_to_meta(req.participants),
         })
 
     chroma_store.add_documents(
@@ -208,19 +242,20 @@ def memory_query(
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
 ) -> MemoryQueryResponse:
     # session id is read but not required for reads; we log it for
-    # traceability. Cross-session retrieval is the whole point of
-    # Sprint 2's done-criterion.
+    # traceability. Cross-session retrieval within a member is the
+    # Sprint 2 done-criterion and still works — the Card 3 filter cuts
+    # across members, not across sessions.
     _ = x_session_id
 
     query_vec = embed_texts([req.query])[0]
 
-    where: Optional[Dict[str, Any]] = None
-    if req.session_id_filter:
-        where = {"session_id": req.session_id_filter}
-    # exclude_parent_turn_id is rarely used (we usually do not want to
-    # echo back the in-progress turn). Chroma supports $ne via where.
-    if req.exclude_parent_turn_id:
-        where = {**(where or {}), "parent_turn_id": {"$ne": req.exclude_parent_turn_id}}
+    # Card 3: the scope filter is built server-side from member_id and
+    # is never optional. Callers cannot widen it.
+    where = scopes.build_where(
+        req.member_id,
+        session_id_filter=req.session_id_filter,
+        exclude_parent_turn_id=req.exclude_parent_turn_id,
+    )
 
     raw = chroma_store.query(query_vec, k=req.k, where=where)
     return MemoryQueryResponse(
