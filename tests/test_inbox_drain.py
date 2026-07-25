@@ -109,6 +109,34 @@ def test_queued_message_is_answered_on_wake_with_session_continuity(hub):
     assert writes[-1]["participants"] == ["drew"]
 
 
+def test_drain_emits_queue_wait_metric(hub, tmp_path):
+    """Card 7: the waiting is measured, not just the turn."""
+    import json
+
+    client, token, _server, _control, _writes = hub
+    client.post("/members/vera/presence", headers=_auth(token), json={"presence": "asleep"})
+    msg = client.post(
+        "/members/vera/chat", headers=_auth(token), json={"prompt": "measure me"}
+    ).json()
+    client.post("/members/vera/presence", headers=_auth(token), json={"presence": "awake"})
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "metrics.jsonl").read_text().splitlines()
+    ]
+    drains = [r for r in records if r["probe_id"] == "brainstem.inbox_drain"]
+    assert len(drains) == 1
+    assert drains[0]["member_id"] == "vera"
+    assert drains[0]["msg_id"] == msg["msg_id"]
+    assert drains[0]["queue_wait_ms"] >= 0.0
+    assert drains[0]["token_name"] == "drew"
+
+    # And the fabric status feed carries the family roster (Card 7).
+    fabric = client.get("/fabric/status").json()
+    assert fabric["family"][0]["id"] == "vera"
+    assert fabric["family"][0]["queue_depth"] == 0
+
+
 def test_queued_messages_survive_restart(hub, tmp_path):
     client, token, server, _control, _writes = hub
 

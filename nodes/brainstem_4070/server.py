@@ -671,6 +671,35 @@ def _drain_inbox(member_id: str) -> int:
             "memory_written": result.memory_written,
         })
         answered += 1
+
+        # Card 7: how long the message sat in custody before the member
+        # answered it. The generate record covers the turn itself; this
+        # record covers the waiting.
+        try:
+            queued_at = datetime.fromisoformat(msg["queued_at"])
+            queue_wait_ms = (
+                datetime.now(timezone.utc) - queued_at
+            ).total_seconds() * 1000.0
+        except (KeyError, ValueError):
+            queue_wait_ms = None
+        drain_record = MetricRecord(
+            probe_id="brainstem.inbox_drain",
+            stage="drain",
+            ingress_ns=now_ns(),
+            egress_ns=now_ns(),
+            payload_bytes=len(msg["prompt"].encode("utf-8")),
+            ok=True,
+            extra={
+                "member_id": member_id,
+                "msg_id": msg["msg_id"],
+                "queue_wait_ms": round(queue_wait_ms, 3) if queue_wait_ms is not None else None,
+                "token_name": msg["person"],
+            },
+        )
+        try:
+            metrics_sink.write(drain_record)
+        except Exception:
+            logger.warning("metric sink write failed", exc_info=True)
     if answered:
         logger.info("inbox drain: member=%s answered=%d", member_id, answered)
     return answered
@@ -991,6 +1020,9 @@ def fabric_status():
         "nas": {**nas_status, "url_configured": settings.nas_url},
         "embedder": {**embedder_status, "url_configured": settings.embedder_url},
         "metrics": _metrics_summary(),
+        # Card 7: the family roster on the live status feed — presence
+        # and queue depth per member, same shape as GET /family.
+        "family": [_member_summary(m) for m in family_registry.members],
         "recent_roundtrips": list(recent_roundtrips)[-25:][::-1],
     }
 
