@@ -1,6 +1,6 @@
 # Nexus V2: Family of Models
 
-Status: PROPOSED — redesign of record, pending Drew's review
+Status: ACCEPTED — Drew signed off on the direction and resolved all open questions on 2026-07-25; see Section 13 (decision record)
 Date: 2026-07-25
 Branch: `claude/nexus-architecture-redesign-zq630k`
 Supersedes: the V1 "distributed cognition fabric" framing in `readme.md` (brainstem/cortex division of labor). It does NOT throw away the V1 code; Section 3 maps every existing asset to its V2 role.
@@ -34,7 +34,7 @@ Almost everything below the top layer. The reshape is mostly a re-scoping of mem
 | Phase 0 metric harness (`bench/probes.py`, JSONL sink, dashboard) | Unchanged; gains `member_id` on every record. Load/swap latency becomes a first-class metric. |
 | `bench/eval/` harness + pre-registration discipline (Sprint 3d) | Becomes the **per-member report card** — the honesty mechanism for future self-training (Section 10), and the home of the concierge delegation ledger (Section 9.2). |
 | Jetson → brainstem sensory pathway (designed, partly built) | Becomes the **household memory feed**: Jetson-classified events land in shared scope, readable by every member. |
-| Sprint 4 bidirectional callback design (`docs/sprint_4_bidirectional_callback.md`) | Still the plan for mid-inference memory recall; the callback's `memory_query` simply carries the member's scope filter. |
+| Sprint 4 bidirectional callback design (`docs/sprint_4_bidirectional_callback.md`) | Still the plan for mid-inference memory recall; parked until scoped memory ships (decision 7), then lands with the member's scope filter as a mandatory part of the tool contract. |
 | NAS memory / episodic store (`nodes/nas_memory/`) | Household episodic log (sensor events, shared timeline). |
 | `core/main.py` MQTT heartbeat registry | Optional fabric-health layer; not on the V1 critical path. |
 
@@ -95,7 +95,7 @@ sensor_source:    e.g. "jetson_backdoor_cam", when origin == "sensor"
 Rules:
 
 1. **Private by default.** Conversation turns are written to `private:<member>` unless the promotion is explicit.
-2. **Promotion copies, never moves.** Sharing writes a new record into `shared:household` with `promoted_from`/`promoted_by` set; the private original is untouched. The family sees *what* was shared and *who* shared it, and the paper trail is permanent.
+2. **Promotion copies, never moves.** Sharing writes a new record into `shared:household` with `promoted_from`/`promoted_by` set; the private original is untouched. The family sees *what* was shared and *who* shared it, and the paper trail is permanent. Per decision 3, a member may *offer* to share ("want me to share this with the family?") but the write always requires the person's yes — and member specs carry an offer-sparingly rule so this stays the exception, not a reflex.
 3. **No cross-scope leakage at retrieval.** The scope filter is applied server-side in the hub, not trusted to the client or the model.
 4. **Sensor data is born shared.** The household camera/sensor feed is common ground by definition — the whole family can know the dog went out at 5pm.
 
@@ -148,7 +148,7 @@ GET  /members/{id}/inbox/{msg_id}   -> poll a queued message's reply
 GET  /household/timeline            -> recent shared/sensor events
 ```
 
-`X-Session-Id` stays (sessions are now *within* a member relationship). `Authorization: Bearer` stays; `token_name` feeds `participants`.
+Per decision 2, sessions are **hub-minted** per (person, member) pair — a session-create call returns the ID, and the hub persists the session and its turn counter server-side (this also fixes the documented restart-resets-`turn_idx` wart from `docs/memory_system.md`). `Authorization: Bearer` stays; `token_name` feeds `participants`.
 
 ## 6. Inference runtime
 
@@ -174,9 +174,9 @@ The original peripheral-nervous-system idea survives intact, re-pointed at share
 
 **Project Vector** is the same pattern with different provenance: a sensor platform a single member controls writes to `experiential:<member>` — that member's private senses, not the household's. The scope exists in the schema from V1 so Vector plugs in without a migration.
 
-## 9. The concierge
+## 9. The concierge — Jeffery
 
-A small always-awake model on the 4070's 12 GB, working **both directions**:
+A small always-awake model on the 4070's 12 GB, named **Jeffery** (decision 8, after the Fresh Prince butler), working **both directions**:
 
 - **Downward (people → sleeping members):** takes messages, acknowledges receipt, and prepares the briefing each member gets on wake.
 - **Upward (members → concierge):** accepts **delegated tasks** from family members — context fetches, scaffolding, summarization, drafting, anything a member decides is worth handing off — and executes them while the member is off the GPU.
@@ -201,11 +201,12 @@ Residency slices become triage-and-dispatch rather than end-to-end completion: a
 Which tasks the concierge can be trusted with is not designed — it is **learned empirically, separately by each member**. Every delegated task is recorded:
 
 ```
-{task_id, member_id, task_type, brief, result_ref,
- concierge_latency_ms, member_score (1-5), member_notes, ts}
+{task_id, member_id, task_type, brief, result_ref, concierge_latency_ms,
+ scores: {followed_brief: 1-5, completeness: 1-5, usefulness: 1-5},
+ member_notes, ts}
 ```
 
-The score is assigned at step 6 of the wake cycle, when the member actually consumes the result — the moment it has real evidence of whether the concierge understood the brief. Rolling per-`(member_id, task_type)` scores then feed each member's own triage decisions: a member consults its ledger history when deciding *answer now vs. delegate*.
+Scoring is three-axis from task one (decision 6): `followed_brief` and `completeness` diagnose the concierge's execution, `usefulness` diagnoses the brief itself — a low-usefulness/high-followed-brief task means the *member* briefed badly, and those need different fixes. The scores are assigned at step 6 of the wake cycle, when the member actually consumes the result — the moment it has real evidence. Rolling per-`(member_id, task_type)` scores then feed each member's own triage decisions: a member consults its ledger history when deciding *answer now vs. delegate*.
 
 Two members will develop different effective use of the concierge, and that asymmetry is signal, not noise: part of what the ledger measures is how well a *member briefs* — one member may communicate tasks in a way the concierge executes well and therefore earn more leverage from it than a sibling does. Trial and error is the mechanism. The ledger is also bench-grade data: once enough tasks accumulate, "delegation lift" (turnaround time and answer quality with vs. without the concierge) becomes a pre-registerable metric in the `bench/eval/` harness.
 
@@ -229,11 +230,28 @@ GET  /members/{id}/briefing         -> the wake-cycle handover package
 
 The member→concierge direction is the first real consumer of the Sprint 4 service-token class (`docs/sprint_4_bidirectional_callback.md` Section 7): members call the concierge with service credentials, not user tokens.
 
-### 9.5 Phasing
+### 9.5 Trust gates (what "earning more privileges" means)
+
+Two kinds of trust, measured separately:
+
+- **Delegation trust** (per member, per task type) lives in the ledger and governs *what members choose to hand off*. It needs no gate — each member's own triage decisions are the enforcement.
+- **Capability trust** (global, for Jeffery) governs *what tools Jeffery may use*, in tiers:
+
+| Tier | Tools | How it's granted |
+|---|---|---|
+| **T0 — custody** | inbox custody, briefings, `shared:household` retrieval | Granted at V1.5. This is the receptionist floor. |
+| **T1 — read-only research** | T0 + web search/fetch, local file reads, writes confined to a per-task workspace | Earned via the graduation gate below. |
+| **T2 — write/act** | anything with effects outside a task workspace | Never auto-granted. Requires Drew's explicit approval per capability, regardless of scores. |
+
+**Graduation gate T0 → T1:** at least 20 scored tasks in the ledger with rolling means of `followed_brief >= 4.0` and `completeness >= 3.5`, and **zero provenance violations** (any attempt to touch a private scope, ever, is disqualifying). The bar is on `followed_brief` above all, because a tool-holding agent that deviates from its brief is dangerous in proportion to its tools.
+
+**Demotion is automatic and cheap:** a provenance violation drops Jeffery a tier immediately pending human review; a rolling `followed_brief` mean below 3.0 over the last 10 tasks freezes acceptance of new task types until it recovers. Gates are config in the registry, so tightening or loosening them is a data change — and every gate decision is itself logged, so "why does Jeffery have this tool" always has an answer in the record.
+
+### 9.6 Phasing
 
 - **V1:** no concierge; single member (Section 11 unchanged). The inbox and 202 contract are designed so the concierge slots in behind them without an API break.
-- **V1.5 — concierge as receptionist:** small model resident on the 4070, message custody + wake-cycle briefing. Downward direction only.
-- **V2.x — delegation:** task briefs, the ledger, scoring, and triage-and-dispatch scheduling. Requires at least two members before the scheduling half pays for itself, but the ledger is worth running from the first delegated task.
+- **V1.5 — Jeffery as receptionist:** dense ~8B instruct at Q5 resident on the 4070 (decision 4 — MoE loses here: all experts must fit in memory, and 12 GB minus KV-cache headroom buys a better dense model than any MoE that fits; revisit via registry swap if a strong sub-10 GB MoE ships). Message custody + wake-cycle briefing, T0 tools only.
+- **V2.x — delegation:** task briefs, the ledger, three-axis scoring, triage-and-dispatch scheduling, and the T1 graduation gate armed. Requires at least two members before the scheduling half pays for itself, but the ledger is worth running from the first delegated task.
 
 ## 10. Self-improvement (later, but designed for)
 
@@ -265,13 +283,15 @@ Everything in V1 is the smallest honest version of the real shape — no placeho
 - No self-training until the bench report-card gate exists for that member.
 - No rewrite of the embedder/Chroma/auth/metrics stack — V2 is additive at the edges of V1 code.
 
-## 13. Open questions for Drew
+## 13. Decision record (Drew, 2026-07-25)
 
-1. **First member.** Which model and what name/spec? (The current 4090 resident, Qwen3-30B-A3B AWQ, has a GGUF equivalent; or start smaller for faster swap cycles.)
-2. **Session semantics.** Keep `X-Session-Id` client-generated as today, or have the hub mint sessions per (person, member) pair?
-3. **Promotion UX.** Explicit command only ("share this"), or may a member *ask* "want me to share this with the family?" (the write still requires the person's yes)?
-4. **Concierge model.** What fits 12 GB and does briefing + task legwork well — e.g. a ~7–8B instruct at Q5, or smaller with more context headroom? Does it also own the embedder's box duties (they co-reside on the 4070)?
-5. **Concierge tool surface.** What may it touch when executing task briefs — `shared:household` retrieval and web/local files only, or more? (Its capability set bounds what "delegable" can ever mean.)
-6. **Scoring rubric.** Is a 1–5 score + free-text note per task enough for the ledger, or should members grade on axes (followed brief / completeness / usefulness) from the start?
-7. **Sprint 4 callback.** Land it against the V2 scoped `memory_query` (the design carries over cleanly) or park until V1-of-V2 ships?
-8. **Naming.** "Family registry", "member", "household scope", "concierge" — happy with this vocabulary before it fossilizes into APIs?
+All eight open questions from the proposal are resolved:
+
+1. **First member: Qwen3-30B-A3B-Instruct-2507, GGUF Q4_K_M.** MoE confirmed as the right architecture for the 4090 member: ~3B active parameters per token gives near-small-model speed at 30B-class quality, and the 24 GB VRAM covers the "all experts resident" memory cost that MoE trades for that speed. It is also the model the bench program has pre-registered baselines for, so member #1's report card has history from day one. Name and persona spec: Drew's, to be written before first boot so memories accrue under the right identity from turn zero.
+2. **Sessions are hub-minted** per (person, member) pair, persisted server-side with their turn counters (Section 5). Kills the restart-resets-`turn_idx` wart.
+3. **Promotion: members may offer, the person always confirms** (Section 4.3). Offer-sparingly rule goes in each member's spec.
+4. **Jeffery's model: dense ~8B instruct at Q5** (Section 9.6). MoE rejected for the 12 GB card — total-weights residency is the constraint there, and a dense 8B beats any MoE that fits. Embedder + hub stay co-resident on the 4070 (CPU-bound, no VRAM contention). Revisit by registry swap if the ledger ever shows Jeffery as the bottleneck.
+5. **Tool surface: minimal (T0) at V1.5, read-only research (T1) behind an empirical graduation gate, writes (T2) only by explicit human approval.** "Trust" is now defined concretely in Section 9.5: ≥20 scored tasks, rolling `followed_brief >= 4.0` and `completeness >= 3.5`, zero provenance violations ever; automatic demotion on violation or score collapse.
+6. **Scoring: three axes from task one** — followed-brief / completeness / usefulness, plus the free-text note (Section 9.2). Separates "Jeffery executed badly" from "the member briefed badly," which need different fixes.
+7. **Sprint 4 callback: parked until scoped memory ships**, then lands with the member's scope filter as a mandatory part of the tool contract. An unscoped mid-inference `memory_query` would be a cross-member privacy hole; scoped memory (Section 11, item 3) is the prerequisite.
+8. **Vocabulary frozen** as written — family registry, member, household scope, concierge — and the concierge is named **Jeffery**, after the Fresh Prince butler.
