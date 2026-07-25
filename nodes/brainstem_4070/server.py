@@ -11,9 +11,12 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from core.family import load_member_spec, load_registry
 from core.nas_client import NASClient
 from brainstem_4070.config import settings
 from brainstem_4070.auth import configure_store, require_token, TokenEntry
+from brainstem_4070.family_state import FamilyState
+from brainstem_4070.sessions import HubSessionStore
 from brainstem_4070.embedder_client import EmbedderClient, EmbedderError
 from brainstem_4070.stm_buffer import STMItem, stm_buffer
 from brainstem_4070.filter import basic_validation
@@ -31,7 +34,7 @@ app = FastAPI(
         "write-on-turn / retrieve-before-generate path against the "
         "embedder service."
     ),
-    version="0.4.0",
+    version="0.5.0",
 )
 
 nas = NASClient(settings.nas_url)
@@ -41,6 +44,26 @@ cortex = CortexClient(
     health_timeout=settings.cortex_health_timeout,
 )
 embedder = EmbedderClient(settings.embedder_url, timeout=settings.embedder_timeout)
+
+# Sprint 5: family hub. The registry is the single source of truth for
+# who exists; a broken registry is a boot failure by design (Card 1).
+# Relative registry paths resolve against the repo checkout root; the
+# family root (what spec_file paths are relative to) is wherever the
+# registry's family/ tree lives, so a docker override keeps working.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_registry_path = Path(settings.family_registry_path)
+if not _registry_path.is_absolute():
+    _registry_path = REPO_ROOT / _registry_path
+_family_root = _registry_path.parent.parent
+family_registry = load_registry(_registry_path, _family_root)
+member_specs = {
+    m.id: load_member_spec(m, _family_root) for m in family_registry.members
+}
+family_state = FamilyState(
+    [m.id for m in family_registry.members],
+    default_presence=settings.member_default_presence,
+)
+hub_sessions = HubSessionStore(settings.session_store_path)
 
 # Sprint 3b: load the bearer-token store at process start. Configured
 # path is a docker named volume in production; in dev / tests it gets
@@ -502,6 +525,233 @@ def generate(
 
 
 # --------------------------------------------------------------------------
+# Sprint 5 Card 2: family hub — member routing, presence, inbox v0
+# --------------------------------------------------------------------------
+
+# The member_loading contract generalizes the Sprint 3c cortex-down
+# shape: structured 503 body + Retry-After header, stable string code.
+# A client that already handles cortex_unavailable branches the same way
+# here, just with a longer suggested wait (weights staging + llama.cpp
+# load, not a health-check blip).
+MEMBER_LOADING = "member_loading"
+
+
+class MemberChatRequest(BaseModel):
+    prompt: str
+    system: Optional[str] = None
+    max_tokens: int = 512
+    # None means "use this member's registry sampling default" — the
+    # member's identity includes how it likes to sample.
+    temperature: Optional[float] = None
+
+
+class MemberChatResponse(BaseModel):
+    member_id: str
+    display_name: str
+    text: str
+    model: str
+    finish_reason: Optional[str] = None
+    usage: dict
+    session_id: str
+    turn_idx: Optional[int] = None
+    memory_written: bool = False
+
+
+class PresenceUpdateRequest(BaseModel):
+    presence: str
+
+
+def _member_or_404(member_id: str):
+    try:
+        return family_registry.get(member_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown member '{member_id}'")
+
+
+def _member_summary(member) -> dict:
+    return {
+        "id": member.id,
+        "display_name": member.display_name,
+        "presence": family_state.presence(member.id),
+        "queue_depth": family_state.queue_depth(member.id),
+        "model": {
+            "source": member.model.source,
+            "quant": member.model.quant,
+            "context_length": member.model.context_length,
+        },
+    }
+
+
+@app.get("/family")
+def family_roster():
+    """The household roster: who exists, who is awake, queue depths.
+    Anonymous like the other status endpoints — presence is dashboard
+    material, conversations are not."""
+    return {"members": [_member_summary(m) for m in family_registry.members]}
+
+
+@app.get("/members/{member_id}")
+def member_detail(member_id: str):
+    member = _member_or_404(member_id)
+    summary = _member_summary(member)
+    summary["storage_tier_hint"] = member.storage_tier_hint
+    summary["runtime"] = {
+        "offload_policy": member.runtime.offload_policy,
+        "sampling_defaults": member.runtime.sampling_defaults,
+    }
+    return summary
+
+
+@app.post("/members/{member_id}/presence")
+def member_presence(
+    member_id: str,
+    req: PresenceUpdateRequest,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Presence is reported by the model manager (Card 4). Until it
+    exists this is also the operator's manual switch, which is exactly
+    what the tests use to exercise the queue and loading paths."""
+    _member_or_404(member_id)
+    try:
+        family_state.set_presence(member_id, req.presence)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    logger.info(
+        "presence: member=%s -> %s (set by token=%s)",
+        member_id, req.presence, auth.name,
+    )
+    return {"member_id": member_id, "presence": req.presence}
+
+
+@app.get("/members/{member_id}/inbox/{msg_id}")
+def member_inbox_message(
+    member_id: str,
+    msg_id: str,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Status/result of a queued message. Only the sender can read it —
+    queued messages are custody, not memory, and custody is private.
+    A wrong-person lookup 404s rather than 403s so it doesn't confirm
+    the message exists."""
+    _member_or_404(member_id)
+    record = family_state.get_message(member_id, msg_id)
+    if record is None or record["person"] != auth.name:
+        raise HTTPException(status_code=404, detail="no such message")
+    return {
+        "msg_id": record["msg_id"],
+        "member_id": record["member_id"],
+        "status": record["status"],
+        "queued_at": record["queued_at"],
+        "result": record["result"],
+    }
+
+
+@app.post("/members/{member_id}/chat")
+def member_chat(
+    member_id: str,
+    req: MemberChatRequest,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Talk to a family member.
+
+    - awake: the turn runs now through the existing /generate path with
+      the member's spec as the base system prompt (caller system layers
+      after it, retrieved memory after that, per V2 Section 5).
+    - asleep/busy: 202 + msg_id; the message waits in the inbox.
+    - waking: structured 503 `member_loading` with Retry-After.
+
+    Sessions are hub-minted per (person, member) and persisted, so turn
+    counters survive restarts (Card 2 fixes the Sprint 2 wart).
+    """
+    member = _member_or_404(member_id)
+    presence = family_state.presence(member_id)
+
+    if presence == "waking":
+        retry_after = settings.member_loading_retry_after_seconds
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": MEMBER_LOADING,
+                "retry_after_seconds": retry_after,
+                "message": (
+                    f"{member.display_name} is loading. The hub is up; "
+                    "retry shortly or your message can be queued."
+                ),
+                "member_id": member_id,
+                "presence": presence,
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    if presence in ("asleep", "busy"):
+        msg_id = family_state.enqueue(
+            member_id,
+            prompt=req.prompt,
+            system=req.system,
+            person=auth.name,
+            max_tokens=req.max_tokens,
+            temperature=req.temperature,
+        )
+        logger.info(
+            "queued msg %s for member=%s (presence=%s, from token=%s)",
+            msg_id, member_id, presence, auth.name,
+        )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "queued": True,
+                "msg_id": msg_id,
+                "member_id": member_id,
+                "presence": presence,
+                "status_url": f"/members/{member_id}/inbox/{msg_id}",
+            },
+        )
+
+    # Awake: run the turn live on the hub-minted session.
+    session_id, stored_turn_idx = hub_sessions.get_or_mint(auth.name, member_id)
+    if session_id not in _turn_idx_by_session:
+        # First turn since a restart: seed the runtime counter from the
+        # durable copy instead of silently restarting at 0.
+        _turn_idx_by_session[session_id] = stored_turn_idx
+
+    spec = member_specs[member_id]
+    caller_system = (req.system or "").strip()
+    effective_system = f"{spec}\n\n{caller_system}" if caller_system else spec
+    temperature = (
+        req.temperature
+        if req.temperature is not None
+        else float(member.runtime.sampling_defaults.get("temperature", 0.7))
+    )
+
+    result = generate(
+        GenerateRequest(
+            prompt=req.prompt,
+            system=effective_system,
+            max_tokens=req.max_tokens,
+            temperature=temperature,
+        ),
+        x_session_id=session_id,
+        auth=auth,
+    )
+    if isinstance(result, JSONResponse):
+        # Cortex-down 503: pass the Sprint 3c contract through unchanged.
+        return result
+
+    hub_sessions.record_turn(auth.name, member_id, _turn_idx_by_session[session_id])
+    return MemberChatResponse(
+        member_id=member_id,
+        display_name=member.display_name,
+        text=result.text,
+        model=result.model,
+        finish_reason=result.finish_reason,
+        usage=result.usage,
+        session_id=session_id,
+        turn_idx=result.turn_idx,
+        memory_written=result.memory_written,
+    )
+
+
+# --------------------------------------------------------------------------
 # Phase 0 metric harness: fabric status + dashboard
 # --------------------------------------------------------------------------
 
@@ -649,12 +899,27 @@ def root():
                 "/embedder/health",
                 "/fabric/status",
                 "/dashboard",
+                "/family",
+                "/members/{member_id}",
             ],
             "authenticated": [
                 "/generate",
                 "/embed",
                 "/stm/write",
+                "/members/{member_id}/chat",
+                "/members/{member_id}/presence",
+                "/members/{member_id}/inbox/{msg_id}",
             ],
+        },
+        "member_loading_contract": {
+            "doc": "docs/architecture_v2_family_of_models.md (Section 4.4)",
+            "status": 503,
+            "header": "Retry-After",
+            "error_codes": [MEMBER_LOADING],
+            "queued": {
+                "status": 202,
+                "body_fields": ["queued", "msg_id", "member_id", "presence", "status_url"],
+            },
         },
         "cortex_down_contract": {
             "doc": "docs/exposure_and_cortex_down.md",
