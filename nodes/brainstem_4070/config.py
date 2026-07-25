@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     # Retry-After for the member_loading 503 — weights staging plus a
     # llama.cpp load is tens of seconds, not the cortex-down 5s.
     member_loading_retry_after_seconds: int = 20
+    # Durable inbox (Card 5): queued messages survive hub restarts.
+    # Docker named volume in production, like the token store.
+    inbox_store_path: str = "/data/inbox/inbox.json"
 
     # Service
     # Inside the container the brainstem listens on 0.0.0.0 so compose-

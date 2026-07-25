@@ -31,6 +31,7 @@ def hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator:
     monkeypatch.setenv("BRAINSTEM_TOKEN_STORE_PATH", str(tmp_path / "tokens.json"))
     monkeypatch.setenv("BRAINSTEM_METRICS_PATH", str(tmp_path / "metrics.jsonl"))
     monkeypatch.setenv("BRAINSTEM_SESSION_STORE_PATH", str(tmp_path / "sessions.json"))
+    monkeypatch.setenv("BRAINSTEM_INBOX_STORE_PATH", str(tmp_path / "inbox.json"))
 
     for mod in list(sys.modules):
         if mod.startswith("brainstem_4070"):

@@ -62,6 +62,7 @@ member_specs = {
 family_state = FamilyState(
     [m.id for m in family_registry.members],
     default_presence=settings.member_default_presence,
+    store_path=settings.inbox_store_path,
 )
 hub_sessions = HubSessionStore(settings.session_store_path)
 
@@ -592,6 +593,89 @@ def _member_or_404(member_id: str):
         raise HTTPException(status_code=404, detail=f"unknown member '{member_id}'")
 
 
+def _live_member_turn(
+    member,
+    auth: TokenEntry,
+    prompt: str,
+    system: Optional[str],
+    max_tokens: int,
+    temperature: Optional[float],
+):
+    """One live turn with a member on the caller's hub-minted session:
+    spec as base system, caller system layered after, registry sampling
+    defaults when the caller didn't override. Shared by live chat and
+    the inbox drain. Returns (session_id, result) where result is a
+    GenerateResponse or the cortex-down JSONResponse."""
+    session_id, stored_turn_idx = hub_sessions.get_or_mint(auth.name, member.id)
+    if session_id not in _turn_idx_by_session:
+        # First turn since a restart: seed the runtime counter from the
+        # durable copy instead of silently restarting at 0.
+        _turn_idx_by_session[session_id] = stored_turn_idx
+
+    spec = member_specs[member.id]
+    caller_system = (system or "").strip()
+    effective_system = f"{spec}\n\n{caller_system}" if caller_system else spec
+    effective_temperature = (
+        temperature
+        if temperature is not None
+        else float(member.runtime.sampling_defaults.get("temperature", 0.7))
+    )
+
+    result = _run_turn(
+        GenerateRequest(
+            prompt=prompt,
+            system=effective_system,
+            max_tokens=max_tokens,
+            temperature=effective_temperature,
+        ),
+        session_id=session_id,
+        auth=auth,
+        member=member,
+    )
+    if not isinstance(result, JSONResponse):
+        hub_sessions.record_turn(auth.name, member.id, _turn_idx_by_session[session_id])
+    return session_id, result
+
+
+def _drain_inbox(member_id: str) -> int:
+    """Card 5: answer a freshly-awake member's queued messages in
+    arrival order through the normal chat path — same sessions, same
+    memory scoping, same metrics as a live turn. Stops early if the
+    cortex goes down mid-drain (messages stay queued for the next
+    wake). Returns how many messages were answered."""
+    member = family_registry.get(member_id)
+    answered = 0
+    for msg in family_state.queued_messages(member_id):
+        # The sender authenticated when the message was queued; the
+        # drain runs on their behalf with the recorded attribution.
+        sender = TokenEntry(name=msg["person"], hash="", created_at="")
+        session_id, result = _live_member_turn(
+            member,
+            sender,
+            prompt=msg["prompt"],
+            system=msg["system"],
+            max_tokens=msg["max_tokens"],
+            temperature=msg["temperature"],
+        )
+        if isinstance(result, JSONResponse):
+            logger.warning(
+                "inbox drain for member=%s stopped at msg=%s: cortex down",
+                member_id, msg["msg_id"],
+            )
+            break
+        family_state.complete_message(member_id, msg["msg_id"], result={
+            "text": result.text,
+            "model": result.model,
+            "session_id": session_id,
+            "turn_idx": result.turn_idx,
+            "memory_written": result.memory_written,
+        })
+        answered += 1
+    if answered:
+        logger.info("inbox drain: member=%s answered=%d", member_id, answered)
+    return answered
+
+
 def _member_summary(member) -> dict:
     return {
         "id": member.id,
@@ -644,7 +728,10 @@ def member_presence(
         "presence: member=%s -> %s (set by token=%s)",
         member_id, req.presence, auth.name,
     )
-    return {"member_id": member_id, "presence": req.presence}
+    # Card 5: waking up means answering what accumulated while asleep,
+    # oldest first, before anything else happens.
+    drained = _drain_inbox(member_id) if req.presence == "awake" else 0
+    return {"member_id": member_id, "presence": req.presence, "drained": drained}
 
 
 @app.get("/members/{member_id}/inbox/{msg_id}")
@@ -774,37 +861,18 @@ def member_chat(
         )
 
     # Awake: run the turn live on the hub-minted session.
-    session_id, stored_turn_idx = hub_sessions.get_or_mint(auth.name, member_id)
-    if session_id not in _turn_idx_by_session:
-        # First turn since a restart: seed the runtime counter from the
-        # durable copy instead of silently restarting at 0.
-        _turn_idx_by_session[session_id] = stored_turn_idx
-
-    spec = member_specs[member_id]
-    caller_system = (req.system or "").strip()
-    effective_system = f"{spec}\n\n{caller_system}" if caller_system else spec
-    temperature = (
-        req.temperature
-        if req.temperature is not None
-        else float(member.runtime.sampling_defaults.get("temperature", 0.7))
-    )
-
-    result = _run_turn(
-        GenerateRequest(
-            prompt=req.prompt,
-            system=effective_system,
-            max_tokens=req.max_tokens,
-            temperature=temperature,
-        ),
-        session_id=session_id,
-        auth=auth,
-        member=member,
+    session_id, result = _live_member_turn(
+        member,
+        auth,
+        prompt=req.prompt,
+        system=req.system,
+        max_tokens=req.max_tokens,
+        temperature=req.temperature,
     )
     if isinstance(result, JSONResponse):
         # Cortex-down 503: pass the Sprint 3c contract through unchanged.
         return result
 
-    hub_sessions.record_turn(auth.name, member_id, _turn_idx_by_session[session_id])
     return MemberChatResponse(
         member_id=member_id,
         display_name=member.display_name,
