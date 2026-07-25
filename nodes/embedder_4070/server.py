@@ -115,6 +115,22 @@ class MemoryQueryResponse(BaseModel):
     matches: List[MemoryMatch]
 
 
+class MemoryPromoteRequest(BaseModel):
+    # The member whose private row is being shared, the row, and the
+    # person who confirmed the share. The confirmation itself happens
+    # at the hub (only people hold bearer tokens); by the time this
+    # service sees the request, consent is established.
+    member_id: str
+    memory_id: str
+    promoted_by: str
+
+
+class MemoryPromoteResponse(BaseModel):
+    promoted_id: str
+    promoted_from: str
+    already_promoted: bool
+
+
 class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
@@ -263,11 +279,68 @@ def memory_query(
     )
 
 
+@app.post("/memory/promote", response_model=MemoryPromoteResponse)
+def memory_promote(req: MemoryPromoteRequest) -> MemoryPromoteResponse:
+    """Copy — never move — a private row into shared:household with the
+    full promotion paper trail (Sprint 5 Card 6, V2 Section 4.3).
+
+    Idempotent per source row: the shared copy has a deterministic id,
+    and re-promoting an already-promoted row is a no-op that reports
+    `already_promoted`. The private original is never modified."""
+    target_id = scopes.promoted_id(req.memory_id)
+
+    existing = chroma_store.get_by_ids([target_id])
+    if existing.get("ids"):
+        return MemoryPromoteResponse(
+            promoted_id=target_id,
+            promoted_from=req.memory_id,
+            already_promoted=True,
+        )
+
+    source = chroma_store.get_by_ids([req.memory_id])
+    if not source.get("ids"):
+        raise HTTPException(status_code=404, detail=f"no memory row {req.memory_id!r}")
+
+    source_meta = (source.get("metadatas") or [None])[0] or {}
+    try:
+        new_meta = scopes.build_promotion_metadata(
+            source_meta, req.member_id, req.promoted_by, req.memory_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    document = (source.get("documents") or [""])[0]
+    embedding = (source.get("embeddings") or [None])[0]
+    if embedding is None:
+        raise HTTPException(
+            status_code=500, detail=f"row {req.memory_id!r} has no stored embedding"
+        )
+
+    chroma_store.add_documents(
+        ids=[target_id],
+        documents=[document],
+        embeddings=[list(embedding)],
+        metadatas=[new_meta],
+    )
+    logger.info(
+        "memory_promote %s -> %s (member=%s, by=%s)",
+        req.memory_id, target_id, req.member_id, req.promoted_by,
+    )
+    return MemoryPromoteResponse(
+        promoted_id=target_id,
+        promoted_from=req.memory_id,
+        already_promoted=False,
+    )
+
+
 @app.get("/")
 def root() -> Dict[str, Any]:
     return {
         "service": "Nexus Embedder (4070)",
         "model": settings.model_name,
         "chroma_collection": settings.chroma_collection,
-        "endpoints": ["/health", "/embed", "/memory/write", "/memory/query"],
+        "endpoints": [
+            "/health", "/embed", "/memory/write", "/memory/query",
+            "/memory/promote",
+        ],
     }

@@ -88,5 +88,12 @@ def query(
     return out
 
 
+def get_by_ids(ids: List[str]) -> Dict[str, Any]:
+    """Fetch rows by id including embeddings, so a promotion can copy a
+    row without re-embedding (same vector, same model, by definition)."""
+    coll = get_collection()
+    return coll.get(ids=ids, include=["documents", "metadatas", "embeddings"])
+
+
 def count() -> int:
     return get_collection().count()

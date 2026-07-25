@@ -87,6 +87,18 @@ class EmbedderClient:
         }
         return self._post("/memory/write", payload, headers={"X-Session-Id": session_id})
 
+    def memory_promote(
+        self,
+        member_id: str,
+        memory_id: str,
+        promoted_by: str,
+    ) -> Dict[str, Any]:
+        return self._post("/memory/promote", {
+            "member_id": member_id,
+            "memory_id": memory_id,
+            "promoted_by": promoted_by,
+        })
+
     def memory_query(
         self,
         session_id: str,

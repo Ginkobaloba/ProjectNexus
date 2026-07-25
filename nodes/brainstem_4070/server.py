@@ -670,6 +670,48 @@ def member_inbox_message(
     }
 
 
+class MemoryPromoteRequest(BaseModel):
+    memory_id: str
+
+
+@app.post("/members/{member_id}/memory/promote")
+def member_memory_promote(
+    member_id: str,
+    req: MemoryPromoteRequest,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Promote one of this member's private memories into
+    shared:household (Sprint 5 Card 6).
+
+    Offer-then-confirm, per decision 3: a member may *offer* to share
+    in conversation, but this call is the person's confirmation — only
+    people hold bearer tokens, so reaching this endpoint IS the yes.
+    The embedder copies (never moves) the row and stamps the paper
+    trail: origin=promotion, promoted_from, promoted_by."""
+    _member_or_404(member_id)
+    try:
+        result = embedder.memory_promote(
+            member_id=member_id,
+            memory_id=req.memory_id,
+            promoted_by=auth.name,
+        )
+    except EmbedderError as exc:
+        detail = str(exc)
+        # Surface the embedder's own 4xx verdicts (unknown row, wrong
+        # scope) as client errors rather than a blanket 502.
+        if "404" in detail:
+            raise HTTPException(status_code=404, detail=f"no memory row {req.memory_id!r}")
+        if "400" in detail:
+            raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=502, detail=f"embedder unreachable: {exc}")
+    logger.info(
+        "promotion: member=%s row=%s by=%s -> %s (already=%s)",
+        member_id, req.memory_id, auth.name,
+        result.get("promoted_id"), result.get("already_promoted"),
+    )
+    return result
+
+
 @app.post("/members/{member_id}/chat")
 def member_chat(
     member_id: str,
@@ -934,6 +976,7 @@ def root():
                 "/members/{member_id}/chat",
                 "/members/{member_id}/presence",
                 "/members/{member_id}/inbox/{msg_id}",
+                "/members/{member_id}/memory/promote",
             ],
         },
         "member_loading_contract": {

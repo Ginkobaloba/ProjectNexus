@@ -84,6 +84,46 @@ def participants_to_meta(participants: Optional[List[str]]) -> str:
     return ",".join(p.strip() for p in (participants or []) if p and p.strip())
 
 
+def promoted_id(source_id: str) -> str:
+    """Deterministic id for the shared copy of a promoted row. Same
+    source promoted twice lands on the same id — promotion is
+    idempotent per source row."""
+    return f"{source_id}::promoted"
+
+
+def build_promotion_metadata(
+    source_meta: Dict[str, Any],
+    member_id: str,
+    promoted_by: str,
+    source_id: str,
+) -> Dict[str, Any]:
+    """Metadata for the shared:household copy of a private row.
+
+    Promotion copies, never moves (V2 Section 4.3): the private
+    original is untouched and the copy carries the permanent paper
+    trail — origin=promotion, promoted_from, promoted_by, and which
+    member's private scope it came from. V1 promotes from the member's
+    private scope only; experiential promotion arrives with Project
+    Vector if ever.
+    """
+    source_scope = (source_meta or {}).get("scope")
+    if source_scope != private_scope(member_id):
+        raise ValueError(
+            f"row {source_id!r} has scope {source_scope!r}; only rows in "
+            f"{private_scope(member_id)!r} can be promoted by member {member_id!r}"
+        )
+    meta = dict(source_meta)
+    meta.update(
+        scope=SHARED_SCOPE,
+        member_id=HOUSEHOLD_MEMBER_ID,
+        origin="promotion",
+        promoted_from=source_id,
+        promoted_from_member=member_id,
+        promoted_by=promoted_by,
+    )
+    return meta
+
+
 def plan_scope_backfill(
     ids: List[str],
     metadatas: List[Optional[Dict[str, Any]]],
