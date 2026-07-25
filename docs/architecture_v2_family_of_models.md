@@ -32,7 +32,7 @@ Almost everything below the top layer. The reshape is mostly a re-scoping of mem
 | Bearer-token auth (Sprint 3b) + `token_name` attribution | Unchanged. Token attribution becomes the *person* half of provenance (who was in the conversation). |
 | Cortex-down 503 contract (Sprint 3c: `error`, `retry_after_seconds`, `Retry-After`) | Generalizes into the **member-loading contract**: same shape, new code `member_loading`, meaning "your family member is waking up / finishing a task; retry or wait for the queued reply." |
 | Phase 0 metric harness (`bench/probes.py`, JSONL sink, dashboard) | Unchanged; gains `member_id` on every record. Load/swap latency becomes a first-class metric. |
-| `bench/eval/` harness + pre-registration discipline (Sprint 3d) | Becomes the **per-member report card** — and the honesty mechanism for future self-training (Section 9). |
+| `bench/eval/` harness + pre-registration discipline (Sprint 3d) | Becomes the **per-member report card** — the honesty mechanism for future self-training (Section 10), and the home of the concierge delegation ledger (Section 9.2). |
 | Jetson → brainstem sensory pathway (designed, partly built) | Becomes the **household memory feed**: Jetson-classified events land in shared scope, readable by every member. |
 | Sprint 4 bidirectional callback design (`docs/sprint_4_bidirectional_callback.md`) | Still the plan for mid-inference memory recall; the callback's `memory_query` simply carries the member's scope filter. |
 | NAS memory / episodic store (`nodes/nas_memory/`) | Household episodic log (sensor events, shared timeline). |
@@ -154,7 +154,7 @@ GET  /household/timeline            -> recent shared/sensor events
 
 - **Runtime: llama.cpp (`llama-server`)** on the 4090 host, replacing the vLLM/TRT-LLM single-model setups in `Nexus-LLM-Runtime-4090/`. Reasons: GGUF is the lingua franca of Hugging Face local models (add-a-member = download a GGUF), and layer offload to RAM (`--n-gpu-layers`) plus mmap-from-disk gives us the VRAM → RAM → SSD gradient natively.
 - **Offload policy is per-member** (registry `runtime.offload_policy`). A member whose job is overnight consolidation can run huge-and-slow (`vram_ram_ssd`); the conversational member should fit VRAM+RAM.
-- The 4070's 12 GB is *not* used to split a member's weights. It can, later, host a small always-awake member (a "concierge" that takes messages while big siblings sleep) — noted as an option, not V1.
+- The 4070's 12 GB is *not* used to split a member's weights. It hosts the **concierge** (Section 9): a small always-awake model that takes messages for sleeping siblings and executes tasks they delegate to it.
 
 ## 7. Weights storage: the family home
 
@@ -174,14 +174,75 @@ The original peripheral-nervous-system idea survives intact, re-pointed at share
 
 **Project Vector** is the same pattern with different provenance: a sensor platform a single member controls writes to `experiential:<member>` — that member's private senses, not the household's. The scope exists in the schema from V1 so Vector plugs in without a migration.
 
-## 9. Self-improvement (later, but designed for)
+## 9. The concierge
+
+A small always-awake model on the 4070's 12 GB, working **both directions**:
+
+- **Downward (people → sleeping members):** takes messages, acknowledges receipt, and prepares the briefing each member gets on wake.
+- **Upward (members → concierge):** accepts **delegated tasks** from family members — context fetches, scaffolding, summarization, drafting, anything a member decides is worth handing off — and executes them while the member is off the GPU.
+
+The concierge is staff, not a sibling: it has its own spec and its own working memory, but it holds no relationships. Its purpose is to keep the household responsive while the 4090 serves one member at a time.
+
+### 9.1 The wake cycle (triage-and-dispatch)
+
+The scheduling discipline that keeps quick replies from stalling behind long work. When multiple members have queued messages:
+
+1. **Load** the first member (queue order / priority).
+2. **Briefing:** the concierge hands over the member's inbox plus a digest of what happened while it slept (drawn from `shared:household` — sensor events, promoted memories, anything family-visible).
+3. **Triage:** for each item the member decides — *answer now*, *delegate* (issue the concierge a task brief: fetch this context, build this scaffolding, do this legwork), or *defer*.
+4. **Dispatch and yield:** the member answers the quick items, files its task briefs, and releases the GPU. The next member loads and gets the same cycle.
+5. **Concierge works** the delegated task queue in parallel on the 4070 — it is never blocked by who holds the 4090.
+6. **Re-wake:** when a member's delegated tasks complete, the concierge puts that member back in the wake queue. On its next residency the member finishes the deferred items with the gathered context — and **scores each completed task** (Section 9.2) before yielding again.
+
+Residency slices become triage-and-dispatch rather than end-to-end completion: a member's long research task no longer holds the GPU hostage while a sibling's ten-second reply waits.
+
+### 9.2 The delegation ledger (earned trust, per member)
+
+Which tasks the concierge can be trusted with is not designed — it is **learned empirically, separately by each member**. Every delegated task is recorded:
+
+```
+{task_id, member_id, task_type, brief, result_ref,
+ concierge_latency_ms, member_score (1-5), member_notes, ts}
+```
+
+The score is assigned at step 6 of the wake cycle, when the member actually consumes the result — the moment it has real evidence of whether the concierge understood the brief. Rolling per-`(member_id, task_type)` scores then feed each member's own triage decisions: a member consults its ledger history when deciding *answer now vs. delegate*.
+
+Two members will develop different effective use of the concierge, and that asymmetry is signal, not noise: part of what the ledger measures is how well a *member briefs* — one member may communicate tasks in a way the concierge executes well and therefore earn more leverage from it than a sibling does. Trial and error is the mechanism. The ledger is also bench-grade data: once enough tasks accumulate, "delegation lift" (turnaround time and answer quality with vs. without the concierge) becomes a pre-registerable metric in the `bench/eval/` harness.
+
+### 9.3 Provenance boundaries
+
+The concierge routes around privacy; it never breaches it:
+
+1. **No private-scope retrieval.** The concierge cannot query any `private:<member>` or `experiential:<member>` collection. It works *only* from the task brief the member wrote — the member decides what context leaves its private scope, exactly like promotion (Section 4.3).
+2. **Queued messages are in custody, not memory.** An inbox item the concierge holds for a sleeping member has not been "heard" by anyone yet; it becomes memory only when the member processes it, and then in that member's private scope.
+3. **Task results belong to the delegator.** Completed task output is written to the delegating member's `private:<member>` scope with `origin: "delegated_task"` and provenance recording that the concierge executed it.
+4. **The briefing digest is shared-scope only.** "What happened while you slept" is assembled exclusively from `shared:household` — the concierge cannot tell one member what another said in private, because it never knew.
+
+### 9.4 API additions
+
+```
+POST /concierge/tasks               -> member files a task brief (service-auth)
+GET  /concierge/tasks/{id}          -> status / result_ref
+POST /concierge/tasks/{id}/score    -> member's evaluation (writes the ledger)
+GET  /members/{id}/briefing         -> the wake-cycle handover package
+```
+
+The member→concierge direction is the first real consumer of the Sprint 4 service-token class (`docs/sprint_4_bidirectional_callback.md` Section 7): members call the concierge with service credentials, not user tokens.
+
+### 9.5 Phasing
+
+- **V1:** no concierge; single member (Section 11 unchanged). The inbox and 202 contract are designed so the concierge slots in behind them without an API break.
+- **V1.5 — concierge as receptionist:** small model resident on the 4070, message custody + wake-cycle briefing. Downward direction only.
+- **V2.x — delegation:** task briefs, the ledger, scoring, and triage-and-dispatch scheduling. Requires at least two members before the scheduling half pays for itself, but the ledger is worth running from the first delegated task.
+
+## 10. Self-improvement (later, but designed for)
 
 "A member studies to get better" = fine-tuning (realistically LoRA on the 4090) on curated data from its own scopes. Two standing rules, both already paid for:
 
 1. **Training data respects provenance.** A member trains only on `private:<self>` + `shared:household` + `experiential:<self>` — exactly its retrieval scope. Nothing about training gets to cross the privacy boundary.
 2. **No silent self-modification.** Every candidate adapter runs the `bench/eval/` gauntlet against that member's frozen baseline, with the Sprint 3d pre-registration discipline (win condition declared before the run, bootstrap CIs, guard-task regression tolerance). A member that "studied" but regressed doesn't ship. The bench harness stops being sprint tooling and becomes the family's report card.
 
-## 10. Version 1 scope (single member, full architecture)
+## 11. Version 1 scope (single member, full architecture)
 
 Everything in V1 is the smallest honest version of the real shape — no placeholder designs that get rewritten when member #2 arrives.
 
@@ -195,19 +256,22 @@ Everything in V1 is the smallest honest version of the real shape — no placeho
 
 **Adding member #2 is then, by construction:** download GGUF → place on a tier → write registry entry + spec file → hub creates the private collection on first contact. Zero code.
 
-## 11. What V2 deliberately does not do
+## 12. What V2 deliberately does not do
 
 - No multi-GPU tensor splitting of one model (confirmed dead end).
 - No simultaneous residency of two large members (queue + swap instead).
 - No automatic sharing of conversation memory (promotion is always explicit).
+- No concierge access to any private or experiential scope — it works from briefs only.
 - No self-training until the bench report-card gate exists for that member.
 - No rewrite of the embedder/Chroma/auth/metrics stack — V2 is additive at the edges of V1 code.
 
-## 12. Open questions for Drew
+## 13. Open questions for Drew
 
 1. **First member.** Which model and what name/spec? (The current 4090 resident, Qwen3-30B-A3B AWQ, has a GGUF equivalent; or start smaller for faster swap cycles.)
 2. **Session semantics.** Keep `X-Session-Id` client-generated as today, or have the hub mint sessions per (person, member) pair?
 3. **Promotion UX.** Explicit command only ("share this"), or may a member *ask* "want me to share this with the family?" (the write still requires the person's yes)?
-4. **Concierge option.** Reserve the 4070's 12 GB for a small always-awake member to take messages for sleeping siblings — in scope for V1.x or parked?
-5. **Sprint 4 callback.** Land it against the V2 scoped `memory_query` (the design carries over cleanly) or park until V1-of-V2 ships?
-6. **Naming.** "Family registry", "member", "household scope" — happy with this vocabulary before it fossilizes into APIs?
+4. **Concierge model.** What fits 12 GB and does briefing + task legwork well — e.g. a ~7–8B instruct at Q5, or smaller with more context headroom? Does it also own the embedder's box duties (they co-reside on the 4070)?
+5. **Concierge tool surface.** What may it touch when executing task briefs — `shared:household` retrieval and web/local files only, or more? (Its capability set bounds what "delegable" can ever mean.)
+6. **Scoring rubric.** Is a 1–5 score + free-text note per task enough for the ledger, or should members grade on axes (followed brief / completeness / usefulness) from the start?
+7. **Sprint 4 callback.** Land it against the V2 scoped `memory_query` (the design carries over cleanly) or park until V1-of-V2 ships?
+8. **Naming.** "Family registry", "member", "household scope", "concierge" — happy with this vocabulary before it fossilizes into APIs?
