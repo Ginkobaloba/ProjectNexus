@@ -130,3 +130,61 @@ Chunk C confirmed the cross-session recall test against this stack. Sprint 3b la
 ## Auth (Sprint 3b)
 
 `/generate`, `/embed`, and `/stm/write` now require `Authorization: Bearer <token>`. Status endpoints (`/health`, `/cortex/health`, `/embedder/health`, `/fabric/status`, `/dashboard`, `/`) stay anonymous. Tokens are minted via `python scripts/create_token.py --name <client>` inside the brainstem container; the plaintext token is printed once and only the argon2id (or scrypt fallback) hash lives on disk. Per-request token attribution is logged and written to the metric record under `token_name`. See `docs/auth_middleware.md` for the full design and decision log.
+
+## Sprint 5: scoped memory
+
+Design of record: `docs/architecture_v2_family_of_models.md` (Sections 4 and 5), implemented per `docs/sprints/SPRINT_5_PLAN_2026-07-25.md` Card 3. Everything above this section describes the single-scope Sprint 2 store; this section describes how it became a multi-member store without a rewrite — the collection, chunker, and BGE model are all unchanged.
+
+### Scopes
+
+Every row now lives in exactly one of three scopes:
+
+- **`private:<member_id>`** — 1-on-1 conversation turns between a person and that member. This is the default write target for every turn. Only that member's queries can read it.
+- **`shared:household`** — the family's common ground: sensor events (Jetson classification, born shared) and conversation memories a person has explicitly promoted. Every member's queries can read it.
+- **`experiential:<member_id>`** — reserved for Project Vector (a member's own sensor platform). No writers in V1; only that member's queries can read it.
+
+`nodes/embedder_4070/scopes.py` is the single source of truth for these rules (pure functions, no Chroma dependency, so the privacy logic is unit-testable on its own).
+
+### Provenance metadata
+
+Every chunk's metadata gained four fields on top of the Sprint 2 schema (`session_id`, `turn_idx`, `ts`, `model_used`, etc. — all unchanged):
+
+- `scope` — one of the three scopes above.
+- `member_id` — the member the row belongs to (`"household"` for `shared:household` rows).
+- `origin` — `conversation | sensor | promotion | vector_platform | delegated_task` (the last two are reserved for Project Vector and the V1.5 concierge; no writer produces them yet).
+- `participants` — who was in the conversation, from `token_name` attribution. Chroma metadata values must be scalars, so this is stored **comma-joined** (e.g. `"drew"` or `"drew,vera"`), not as a list.
+
+Promoted rows carry three additional fields: `promoted_from` (the source row id), `promoted_from_member` (which member's private scope it came from), and `promoted_by` (who confirmed the share).
+
+### `/memory/write` requires scope + member_id
+
+`POST /memory/write` on the embedder now takes mandatory `scope` and `member_id` fields (`origin` defaults to `"conversation"`, `participants` defaults to empty). The service validates before writing: a member may only write into its own `private:<member>` / `experiential:<member>` scopes or into `shared:household` — never into another member's scopes. A cross-member write attempt is rejected with `400` before anything touches Chroma. There is no longer a way to write an unscoped row.
+
+### `/memory/query` is server-side scope-filtered — always
+
+`POST /memory/query` now takes a mandatory `member_id`. The embedder builds the Chroma `where` clause from it unconditionally:
+
+```
+scope IN (private:<member_id>, shared:household, experiential:<member_id>)
+```
+
+Callers cannot widen this — there is no parameter that requests a different or broader scope set, and the filter is applied inside the embedder service, not trusted to the brainstem or the model. This **amends the Sprint 2 decision** documented above (Chunk B: "no default session filter, because the done-criterion is cross-session recall"). That done-criterion is preserved — a member still recalls every past session it has had — but it no longer means *every session of every member*. Cross-session recall within a member survives; cross-member recall is now structurally impossible through this API. `session_id_filter` and `exclude_parent_turn_id` remain available as optional refinements *inside* the member's visible scopes, not as ways around them.
+
+### `/memory/promote` — copy, never move
+
+`POST /memory/promote` (`member_id`, `memory_id`, `promoted_by`) shares a private memory with the household without touching the original:
+
+- The shared copy gets a **deterministic id** — `{source_id}::promoted` — so promoting the same row twice is a no-op (`already_promoted: true` in the response) rather than a duplicate.
+- The copy is written to `shared:household` with the full paper trail: `origin: "promotion"`, `promoted_from`, `promoted_from_member`, `promoted_by`. The private original's metadata and scope are untouched.
+- The source row must actually be in `private:<member_id>` for that member — promoting a row that isn't yours (or isn't private) is rejected with `400`.
+- At the hub, `POST /members/{id}/memory/promote` is the person's confirmation step; reaching that endpoint at all establishes consent (only people hold bearer tokens), per the offer-then-confirm rule in the V2 decision record — a member may *offer* to share in conversation, but the write only happens once the person calls this endpoint.
+
+### Migration: `scripts/migrate_memory_scopes.py`
+
+Pre-Sprint-5 rows have no `scope` metadata, which makes them invisible to the now-mandatory filter above. The migration script backfills exactly those rows:
+
+- **Dry-run by default.** `python scripts/migrate_memory_scopes.py` only prints the reconciliation plan (`total` / `already_scoped` / `would update`); nothing is written until you pass `--apply`.
+- **Grandfathers into member #1's private scope.** Unscoped rows get `scope=private:<member>` (default: the first entry in `family/registry.yaml`), `member_id=<member>`, `origin=conversation`, and `participants` from the (optional) `--participants` flag — pre-V2 rows never recorded who spoke, so this defaults to empty.
+- **Idempotent.** Rows that already carry a `scope` are left untouched, so re-running the script (with or without `--apply`) is always safe.
+- **Reconciles to the row.** The script tallies `already_scoped + updated` against the collection's total count and exits nonzero if anything is unaccounted for, rather than silently leaving rows behind.
+- Runs inside the embedder container, since that's what owns the Chroma volume: `docker compose exec embedder python scripts/migrate_memory_scopes.py [--apply] [--member ID] [--participants a,b] [--persist-dir ...] [--collection ...]`.
