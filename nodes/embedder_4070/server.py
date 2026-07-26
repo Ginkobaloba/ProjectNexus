@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -279,6 +280,83 @@ def memory_query(
     )
 
 
+class MemoryEventRequest(BaseModel):
+    # A classified household observation, e.g. "the dog went out the
+    # back door". Born shared (V2 Section 8) — sensor events have no
+    # private phase and no promotion step.
+    summary: str
+    sensor_source: str
+    ts: str
+    reported_by: str = ""
+
+
+class MemoryEventResponse(BaseModel):
+    id: str
+    scope: str
+
+
+@app.post("/memory/event", response_model=MemoryEventResponse)
+def memory_event(req: MemoryEventRequest) -> MemoryEventResponse:
+    """Write a household sensor event into shared:household."""
+    summary = req.summary.strip()
+    if not summary:
+        raise HTTPException(status_code=400, detail="summary must not be empty")
+    try:
+        meta = scopes.build_event_metadata(req.sensor_source, req.ts, req.reported_by)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    event_id = f"event:{meta['sensor_source']}:{uuid4().hex[:12]}"
+    embedding = embed_texts([summary])[0]
+    chroma_store.add_documents(
+        ids=[event_id],
+        documents=[summary],
+        embeddings=[embedding],
+        metadatas=[meta],
+    )
+    logger.info("memory_event %s from %s", event_id, meta["sensor_source"])
+    return MemoryEventResponse(id=event_id, scope=meta["scope"])
+
+
+class TimelineEvent(BaseModel):
+    id: str
+    text: str
+    metadata: Dict[str, Any]
+
+
+class TimelineResponse(BaseModel):
+    events: List[TimelineEvent]
+
+
+def newest_first(ids: List[str], documents: List[str],
+                 metadatas: List[Optional[Dict[str, Any]]], limit: int) -> List[Dict[str, Any]]:
+    """Order fetched rows by their ts metadata, newest first. ISO-8601
+    timestamps sort lexicographically; rows with no ts sink to the end
+    rather than masquerading as recent."""
+    rows = [
+        {"id": i, "text": d, "metadata": m or {}}
+        for i, d, m in zip(ids, documents, metadatas)
+    ]
+    rows.sort(key=lambda r: r["metadata"].get("ts") or "", reverse=True)
+    return rows[:limit]
+
+
+@app.get("/memory/timeline", response_model=TimelineResponse)
+def memory_timeline(limit: int = 50) -> TimelineResponse:
+    """Recent shared:household rows, newest first — the household feed.
+    Reads only the shared scope by construction; there is no parameter
+    that reaches anything private."""
+    limit = max(1, min(limit, 200))
+    raw = chroma_store.get_where({"scope": scopes.SHARED_SCOPE})
+    rows = newest_first(
+        raw.get("ids") or [],
+        raw.get("documents") or [],
+        raw.get("metadatas") or [],
+        limit,
+    )
+    return TimelineResponse(events=[TimelineEvent(**r) for r in rows])
+
+
 @app.post("/memory/promote", response_model=MemoryPromoteResponse)
 def memory_promote(req: MemoryPromoteRequest) -> MemoryPromoteResponse:
     """Copy — never move — a private row into shared:household with the
@@ -341,6 +419,6 @@ def root() -> Dict[str, Any]:
         "chroma_collection": settings.chroma_collection,
         "endpoints": [
             "/health", "/embed", "/memory/write", "/memory/query",
-            "/memory/promote",
+            "/memory/promote", "/memory/event", "/memory/timeline",
         ],
     }

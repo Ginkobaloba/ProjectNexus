@@ -786,6 +786,54 @@ def member_inbox_message(
     }
 
 
+class HouseholdEventRequest(BaseModel):
+    summary: str
+    sensor_source: str
+    ts: Optional[str] = None  # defaults to now; Jetsons may batch-report
+
+
+@app.post("/household/events")
+def household_event(
+    req: HouseholdEventRequest,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Ingest a classified sensor observation into shared:household
+    (V2 Section 8 — 'the dog went outside at 5pm'). Sensor events are
+    born shared; they never pass through any private scope. The
+    reporting service's token name lands in provenance."""
+    try:
+        result = embedder.memory_event(
+            summary=req.summary,
+            sensor_source=req.sensor_source,
+            ts=req.ts or datetime.now(timezone.utc).isoformat(),
+            reported_by=auth.name,
+        )
+    except EmbedderError as exc:
+        detail = str(exc)
+        if "400" in detail:
+            raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=502, detail=f"embedder unreachable: {exc}")
+    logger.info(
+        "household event %s from sensor=%s (token=%s)",
+        result.get("id"), req.sensor_source, auth.name,
+    )
+    return result
+
+
+@app.get("/household/timeline")
+def household_timeline(
+    limit: int = 50,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Recent household feed, newest first. Authenticated: presence on
+    the roster is public-ish dashboard material, but what happened in
+    the house is not."""
+    try:
+        return embedder.memory_timeline(limit=limit)
+    except EmbedderError as exc:
+        raise HTTPException(status_code=502, detail=f"embedder unreachable: {exc}")
+
+
 class MemoryPromoteRequest(BaseModel):
     memory_id: str
 
@@ -1077,6 +1125,8 @@ def root():
                 "/members/{member_id}/presence",
                 "/members/{member_id}/inbox/{msg_id}",
                 "/members/{member_id}/memory/promote",
+                "/household/events",
+                "/household/timeline",
             ],
         },
         "member_loading_contract": {

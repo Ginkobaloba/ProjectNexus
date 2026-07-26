@@ -84,6 +84,28 @@ def participants_to_meta(participants: Optional[List[str]]) -> str:
     return ",".join(p.strip() for p in (participants or []) if p and p.strip())
 
 
+def build_event_metadata(
+    sensor_source: str,
+    ts: str,
+    reported_by: str,
+) -> Dict[str, Any]:
+    """Metadata for a household sensor event (V2 Section 8): born
+    shared, never private. `sensor_source` names the device that saw it
+    (e.g. jetson_backdoor_cam); `reported_by` is the service token that
+    delivered it, for the same attribution trail conversations get."""
+    if not sensor_source or not sensor_source.strip():
+        raise ValueError("sensor_source is required for a sensor event")
+    return {
+        "scope": SHARED_SCOPE,
+        "member_id": HOUSEHOLD_MEMBER_ID,
+        "origin": "sensor",
+        "sensor_source": sensor_source.strip(),
+        "reported_by": reported_by,
+        "participants": "",
+        "ts": ts,
+    }
+
+
 def promoted_id(source_id: str) -> str:
     """Deterministic id for the shared copy of a promoted row. Same
     source promoted twice lands on the same id — promotion is
