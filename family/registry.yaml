@@ -15,7 +15,8 @@ concierge:
   display_name: "Jeffery"
   spec_file: "family/jeffery/spec.md"
   model:
-    source: "hf:Qwen/Qwen3-8B-Instruct"
+    source: "hf:Qwen/Qwen3-8B"
+    gguf_repo: "hf:unsloth/Qwen3-8B-GGUF"
     format: "gguf"
     quant: "Q5_K_M"
     context_length: 8192
@@ -31,6 +32,9 @@ members:
     spec_file: "family/vera/spec.md"
     model:
       source: "hf:Qwen/Qwen3-30B-A3B-Instruct-2507"
+      # Where the GGUF quants actually live (the base repo has only
+      # safetensors). scripts/fetch_weights.py downloads from here.
+      gguf_repo: "hf:unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF"
       format: "gguf"
       quant: "Q4_K_M"
       context_length: 32768

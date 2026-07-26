@@ -184,3 +184,40 @@ def test_dead_process_fails_load_and_reports_asleep(tmp_path, monkeypatch):
     record = json.loads((tmp_path / "metrics.jsonl").read_text().splitlines()[-1])
     assert record["ok"] is False
     assert "exited" in record["error"]
+
+
+# ---------------------------------------------------------------------------
+# GGUF selection (fetch tooling)
+# ---------------------------------------------------------------------------
+
+
+def test_select_gguf_files_single_quant():
+    from model_manager_4090.tiering import select_gguf_files
+
+    files = [
+        "README.md",
+        "Qwen3-8B-Q4_K_M.gguf",
+        "Qwen3-8B-Q5_K_M.gguf",
+        "Qwen3-8B-q5_k_m.imatrix",
+    ]
+    assert select_gguf_files(files, "Q5_K_M") == ["Qwen3-8B-Q5_K_M.gguf"]
+
+
+def test_select_gguf_files_split_parts_sorted():
+    from model_manager_4090.tiering import select_gguf_files
+
+    files = [
+        "big-Q4_K_M-00002-of-00003.gguf",
+        "big-Q4_K_M-00001-of-00003.gguf",
+        "big-Q4_K_M-00003-of-00003.gguf",
+        "big-Q8_0.gguf",
+    ]
+    picks = select_gguf_files(files, "q4_k_m")
+    assert picks[0].endswith("00001-of-00003.gguf")
+    assert len(picks) == 3
+
+
+def test_registry_gguf_repo_parses():
+    registry = load_registry(REPO_ROOT / "family" / "registry.yaml", REPO_ROOT)
+    assert registry.get("vera").model.gguf_repo.startswith("hf:")
+    assert registry.concierge.model.gguf_repo.startswith("hf:")

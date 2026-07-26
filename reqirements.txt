@@ -12,3 +12,4 @@ uvicorn[standard]
 sentence-transformers
 pydantic-settings
 pyyaml
+huggingface_hub

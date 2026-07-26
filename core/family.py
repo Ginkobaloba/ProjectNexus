@@ -39,7 +39,11 @@ class _StrictModel(BaseModel):
 
 
 class MemberModel(_StrictModel):
-    source: str          # "hf:<org>/<repo>" or a local path
+    source: str          # "hf:<org>/<repo>" or a local path — the model's identity
+    # Optional: the HF repo the GGUF quants are downloaded from, when
+    # it differs from source (base repos usually ship safetensors only;
+    # quants live in quantizer repos). Used by scripts/fetch_weights.py.
+    gguf_repo: Optional[str] = None
     format: str
     quant: str
     context_length: int

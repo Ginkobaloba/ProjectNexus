@@ -117,6 +117,23 @@ def ensure_hot(filename: str, tiers: TierPaths) -> StageResult:
     )
 
 
+def select_gguf_files(filenames: List[str], quant: str) -> List[str]:
+    """Pick the GGUF file(s) for a quant out of a repo listing.
+
+    Quantizer repos hold many quants side by side; we want exactly the
+    requested one. Handles split models (`...Q4_K_M-00001-of-00003.gguf`)
+    by returning every part, sorted so part 1 comes first — llama.cpp
+    loads a split from its first part. Matching is case-insensitive on
+    the quant tag to survive repo naming whims.
+    """
+    quant_lower = quant.lower()
+    hits = sorted(
+        f for f in filenames
+        if f.lower().endswith(".gguf") and quant_lower in f.lower()
+    )
+    return hits
+
+
 def evict_from_hot(
     tiers: TierPaths,
     needed_bytes: int,
