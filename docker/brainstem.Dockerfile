@@ -18,7 +18,8 @@ RUN pip install --no-cache-dir \
     pydantic \
     pydantic-settings \
     requests \
-    argon2-cffi
+    argon2-cffi \
+    pyyaml
 
 # Copy code last so source changes only rebuild from here down.
 COPY core /app/core
@@ -28,6 +29,16 @@ COPY nodes/brainstem_4070 /app/brainstem_4070
 # token never crosses the network. `docker compose exec brainstem
 # python scripts/create_token.py --name <client>`.
 COPY scripts /app/scripts
+# Sprint 5 Card 1: family registry + member spec files (V2 doc Section
+# 4.1). server.py computes REPO_ROOT as parents[2] of its own file,
+# which assumes the on-checkout layout `<root>/nodes/brainstem_4070/
+# server.py`. In this image the `nodes/` prefix is dropped (source
+# lands at /app/brainstem_4070), so that walk would land on `/` instead
+# of `/app`. Rather than reshuffle the image layout to mirror the repo
+# tree, we copy family/ to a known absolute path and point
+# BRAINSTEM_FAMILY_REGISTRY_PATH (see docker-compose.yml) at it
+# directly, which short-circuits the REPO_ROOT walk entirely.
+COPY family /app/family
 
 ENV PYTHONPATH="/app"
 

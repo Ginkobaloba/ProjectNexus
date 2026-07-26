@@ -27,6 +27,14 @@ services:
       # on the auth_data named volume; mint tokens via
       # `docker compose exec brainstem python scripts/create_token.py --name <client>`.
       - BRAINSTEM_TOKEN_STORE_PATH=/data/auth/tokens.json
+      # Sprint 5 Card 1: the brainstem.Dockerfile layout drops the
+      # `nodes/` prefix (source lands at /app/brainstem_4070), so
+      # server.py's REPO_ROOT walk (parents[2] of its own file) does not
+      # land on the image's app root the way it does on a checkout.
+      # family/ is copied to /app/family in the image; point the
+      # registry loader straight at it rather than reworking the image
+      # layout to mirror the repo tree.
+      - BRAINSTEM_FAMILY_REGISTRY_PATH=/app/family/registry.yaml
       # Phase 0 metric harness: which fabric components are live this run.
       - NEXUS_BUILD_STATE=brainstem+cortex+nas+embedder
     volumes:
@@ -35,6 +43,14 @@ services:
       # Sprint 3b: hashed token registry. Named volume so it survives
       # container rebuilds and is the unit of backup / wipe.
       - auth_data:/data/auth
+      # Sprint 5 Card 2: hub-minted (person, member) sessions with their
+      # turn counters. Named volume so a restart does not reset every
+      # in-flight conversation's turn count back to zero.
+      - session_data:/data/sessions
+      # Sprint 5 Card 5: durable inbox of messages queued for a member
+      # that is not yet awake. Named volume so a queued message survives
+      # a brainstem restart between being written and being drained.
+      - inbox_data:/data/inbox
     depends_on:
       - nas
       - embedder
@@ -91,6 +107,14 @@ volumes:
   # middleware. Survives container restart and rebuild. Backed up by
   # backing up the docker volume.
   auth_data:
+  # Sprint 5 Card 2: hub-minted (person, member) sessions and their turn
+  # counters. Survives container restart and rebuild. Backed up by
+  # backing up the docker volume.
+  session_data:
+  # Sprint 5 Card 5: queued messages awaiting a member's wake (the
+  # durable inbox). Survives container restart and rebuild. Backed up by
+  # backing up the docker volume.
+  inbox_data:
 
 
 networks:
