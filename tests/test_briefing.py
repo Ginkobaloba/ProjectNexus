@@ -175,3 +175,96 @@ def test_briefing_degrades_without_embedder(hub, monkeypatch):
     assert body["household_events"] == []
     assert body["household_events_error"]
     assert "queued_messages" in body
+
+
+# ---------------------------------------------------------------------------
+# R4 — spoken briefing. R5 — wake-cycle attachment.
+# ---------------------------------------------------------------------------
+
+
+class FakeJeffery:
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return {
+            "text": "Good morning. One message from drew; the dog went out.",
+            "model": "jeffery-8b",
+            "finish_reason": "stop",
+            "usage": {"prompt_tokens": 50, "completion_tokens": 20},
+        }
+
+
+def test_spoken_briefing_uses_jeffery_and_only_the_digest(hub, monkeypatch):
+    client, token, server, _events = hub
+    fake = FakeJeffery()
+    monkeypatch.setattr(server, "concierge", fake)
+    monkeypatch.setattr(server, "concierge_spec", "# Jeffery\nBrief factually.")
+
+    res = client.get("/members/vera/briefing?spoken=true", headers=_auth(token)).json()
+    assert res["spoken"].startswith("Good morning")
+    assert res["spoken_source"] == "jeffery"
+    # Jeffery's entire input is spec + the R2 JSON — nothing else.
+    call = fake.calls[0]
+    assert call["system"].startswith("# Jeffery")
+    assert '"queued_messages"' in call["prompt"]
+
+
+def test_spoken_briefing_falls_back_when_jeffery_absent(hub):
+    client, token, _server, _events = hub
+    # Default test config: concierge_url unset -> concierge is None.
+    res = client.get("/members/vera/briefing?spoken=true", headers=_auth(token)).json()
+    assert res["spoken"] is None
+    assert res["spoken_source"] is None
+    assert "queued_messages" in res  # the R2 contract is intact
+
+
+def test_wake_drain_attaches_briefing_to_first_turn_only(tmp_path, monkeypatch):
+    """R5 uses the drain path, so it needs the full cortex-stubbed rig."""
+    import importlib
+    import sys as _sys
+
+    monkeypatch.setenv("BRAINSTEM_TOKEN_STORE_PATH", str(tmp_path / "tokens.json"))
+    monkeypatch.setenv("BRAINSTEM_METRICS_PATH", str(tmp_path / "metrics.jsonl"))
+    monkeypatch.setenv("BRAINSTEM_SESSION_STORE_PATH", str(tmp_path / "sessions.json"))
+    monkeypatch.setenv("BRAINSTEM_INBOX_STORE_PATH", str(tmp_path / "inbox.json"))
+    for mod in list(_sys.modules):
+        if mod.startswith("brainstem_4070"):
+            del _sys.modules[mod]
+    server = importlib.import_module("brainstem_4070.server")
+    server.configure_store(tmp_path / "tokens.json")
+
+    systems_seen = []
+
+    def fake_cortex_generate(**kwargs):
+        systems_seen.append(kwargs.get("system") or "")
+        return {"text": "ok", "model": "stub", "finish_reason": "stop",
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+
+    monkeypatch.setattr(server.embedder, "memory_query", lambda **_: {"matches": []})
+    monkeypatch.setattr(server.embedder, "memory_write", lambda **_: {"ok": True})
+    monkeypatch.setattr(server.embedder, "memory_timeline", lambda limit: {"events": []})
+    monkeypatch.setattr(server.embedder, "health", lambda: {"reachable": True})
+    monkeypatch.setattr(server.cortex, "generate", fake_cortex_generate)
+
+    from fastapi.testclient import TestClient
+    from brainstem_4070.auth import TokenStore
+
+    with TestClient(server.app) as client:
+        token, _ = TokenStore.load(tmp_path / "tokens.json").create("drew")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        client.post("/members/vera/presence", headers=headers, json={"presence": "asleep"})
+        client.post("/members/vera/chat", headers=headers, json={"prompt": "first"})
+        client.post("/members/vera/chat", headers=headers, json={"prompt": "second"})
+        woke = client.post(
+            "/members/vera/presence", headers=headers, json={"presence": "awake"}
+        ).json()
+        assert woke["drained"] == 2
+
+    # Two drained turns: briefing context on the first only (Jeffery is
+    # absent here, so it's the data-digest fallback).
+    assert "You just woke up." in systems_seen[0]
+    assert '"queued_messages"' in systems_seen[0]
+    assert "You just woke up." not in systems_seen[1]

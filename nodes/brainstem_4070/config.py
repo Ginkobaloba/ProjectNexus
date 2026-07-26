@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     # Durable inbox (Card 5): queued messages survive hub restarts.
     # Docker named volume in production, like the token store.
     inbox_store_path: str = "/data/inbox/inbox.json"
+    # --Concierge-- Sprint 6 (V1.5 receptionist). Jeffery's llama-server
+    # on this 4070 host. Empty = not deployed: spoken briefings fall
+    # back to the data-only digest and everything else works.
+    concierge_url: str = ""
+    concierge_timeout: float = 60.0
 
     # Service
     # Inside the container the brainstem listens on 0.0.0.0 so compose-

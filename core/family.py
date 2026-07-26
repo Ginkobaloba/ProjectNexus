@@ -89,6 +89,9 @@ class FamilyMember(_StrictModel):
     runtime: MemberRuntime
     memory: MemberMemory
     storage_tier_hint: str = "hot"
+    # Sprint 6 R5: attach the wake-up briefing as context on the first
+    # drained turn. On by default — a member can decline the service.
+    briefing_on_wake: bool = True
 
     @field_validator("id")
     @classmethod

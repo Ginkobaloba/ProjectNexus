@@ -2,6 +2,7 @@
 from typing import Any, Dict, List, Optional
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import logging
 import uuid
@@ -65,6 +66,18 @@ family_state = FamilyState(
     store_path=settings.inbox_store_path,
 )
 hub_sessions = HubSessionStore(settings.session_store_path)
+
+# Sprint 6 R4: Jeffery's runtime, when deployed. llama-server speaks the
+# same OpenAI-compatible API as the cortex, so the same client serves.
+# None means receptionist-with-laryngitis: data-only briefings still work.
+concierge = None
+concierge_spec = ""
+if settings.concierge_url and family_registry.concierge is not None:
+    concierge = CortexClient(
+        settings.concierge_url, timeout=settings.concierge_timeout,
+        health_timeout=settings.cortex_health_timeout,
+    )
+    concierge_spec = load_member_spec(family_registry.concierge, _family_root)
 
 # Sprint 3b: load the bearer-token store at process start. Configured
 # path is a docker named volume in production; in dev / tests it gets
@@ -645,15 +658,40 @@ def _drain_inbox(member_id: str) -> int:
     wake). Returns how many messages were answered."""
     member = family_registry.get(member_id)
     answered = 0
-    for msg in family_state.queued_messages(member_id):
+
+    # Sprint 6 R5: the freshly-awake member triages with context. The
+    # briefing rides as system context on the FIRST drained turn only —
+    # after that the member is oriented and extra repetition is noise.
+    # Members can decline via the registry flag.
+    briefing_block = None
+    queued_now = family_state.queued_messages(member_id)
+    if member.briefing_on_wake and queued_now:
+        briefing = _build_briefing(member_id)
+        briefing_block = _spoken_briefing(briefing)
+        if briefing_block is None:
+            briefing_block = (
+                "Wake-up briefing (data digest; every fact traces to hub "
+                "state):\n" + json.dumps(briefing, indent=2)
+            )
+        briefing_block = (
+            "You just woke up. " + briefing_block.strip()
+            + "\nAnswer the queued messages in order; this context is "
+            "for orientation, not something to recite."
+        )
+
+    for msg in queued_now:
         # The sender authenticated when the message was queued; the
         # drain runs on their behalf with the recorded attribution.
         sender = TokenEntry(name=msg["person"], hash="", created_at="")
+        msg_system = msg["system"]
+        briefing_attached = briefing_block is not None
+        if briefing_attached:
+            msg_system = briefing_block + (f"\n\n{msg_system}" if msg_system else "")
         session_id, result = _live_member_turn(
             member,
             sender,
             prompt=msg["prompt"],
-            system=msg["system"],
+            system=msg_system,
             max_tokens=msg["max_tokens"],
             temperature=msg["temperature"],
         )
@@ -671,6 +709,7 @@ def _drain_inbox(member_id: str) -> int:
             "memory_written": result.memory_written,
         })
         answered += 1
+        briefing_block = None  # orientation rides the first turn only
 
         # Card 7: how long the message sat in custody before the member
         # answered it. The generate record covers the turn itself; this
@@ -693,6 +732,7 @@ def _drain_inbox(member_id: str) -> int:
                 "member_id": member_id,
                 "msg_id": msg["msg_id"],
                 "queue_wait_ms": round(queue_wait_ms, 3) if queue_wait_ms is not None else None,
+                "briefing_attached": briefing_attached,
                 "token_name": msg["person"],
             },
         )
@@ -837,11 +877,7 @@ def household_timeline(
 BRIEFING_EVENT_CAP = 50
 
 
-@app.get("/members/{member_id}/briefing")
-def member_briefing(
-    member_id: str,
-    auth: TokenEntry = Depends(require_token),
-):
+def _build_briefing(member_id: str) -> Dict[str, Any]:
     """Sprint 6 R2: the data-only wake-up digest.
 
     Built from exactly two sources — the member's inbox custody
@@ -852,8 +888,6 @@ def member_briefing(
     own mail when it drains), and the timeline read is the embedder's
     shared-scope-only path, so nothing private can enter by
     construction."""
-    _member_or_404(member_id)
-
     asleep_since = family_state.last_asleep_at(member_id)
     cutoff = asleep_since or (
         datetime.now(timezone.utc) - timedelta(hours=24)
@@ -890,6 +924,74 @@ def member_briefing(
         "household_events": events,
         "household_events_error": events_error,
     }
+
+
+def _spoken_briefing(briefing: Dict[str, Any]) -> Optional[str]:
+    """Sprint 6 R4: Jeffery digests the R2 JSON into a morning report.
+
+    His entire input is the data-only briefing — the same privacy
+    boundary R2 enforces, now enforced on the prompt side too. Any
+    failure (not deployed, down, slow) returns None: R2 is the
+    contract, R4 is the voice."""
+    if concierge is None:
+        return None
+    prompt = (
+        "Prepare the wake-up briefing for family member "
+        f"{briefing['member_id']!r} from this data, and nothing else. "
+        "Every statement must trace to a field below. If a list is "
+        "empty, say so in one short line.\n\n"
+        + json.dumps(briefing, indent=2)
+    )
+    sampling = family_registry.concierge.runtime.sampling_defaults
+    t0 = now_ns()
+    try:
+        result = concierge.generate(
+            prompt=prompt,
+            system=concierge_spec,
+            max_tokens=400,
+            temperature=float(sampling.get("temperature", 0.3)),
+        )
+    except CortexError as exc:
+        logger.warning("spoken briefing unavailable (Jeffery down): %s", exc)
+        return None
+    build_ms = (now_ns() - t0) / 1e6
+    record = MetricRecord(
+        probe_id="brainstem.briefing",
+        stage="briefing",
+        ingress_ns=t0,
+        egress_ns=now_ns(),
+        payload_bytes=len(prompt.encode("utf-8")),
+        ok=True,
+        extra={
+            "member_id": briefing["member_id"],
+            "briefing_build_ms": round(build_ms, 3),
+            "briefing_tokens": (result.get("usage") or {}).get("completion_tokens", 0),
+        },
+    )
+    try:
+        metrics_sink.write(record)
+    except Exception:
+        logger.warning("metric sink write failed", exc_info=True)
+    return (result.get("text") or "").strip() or None
+
+
+@app.get("/members/{member_id}/briefing")
+def member_briefing(
+    member_id: str,
+    spoken: bool = False,
+    auth: TokenEntry = Depends(require_token),
+):
+    """R2 data digest; `?spoken=true` adds Jeffery's prose rendition
+    (R4), falling back to data-only when he isn't up."""
+    _member_or_404(member_id)
+    briefing = _build_briefing(member_id)
+    if spoken:
+        text = _spoken_briefing(briefing)
+        briefing["spoken"] = text
+        briefing["spoken_source"] = family_registry.concierge.id if (
+            text is not None and family_registry.concierge
+        ) else None
+    return briefing
 
 
 class MemoryPromoteRequest(BaseModel):
@@ -1129,6 +1231,23 @@ def fabric_status():
         # Card 7: the family roster on the live status feed — presence
         # and queue depth per member, same shape as GET /family.
         "family": [_member_summary(m) for m in family_registry.members],
+        # Sprint 6 R3: staff on the status board too. Absent config
+        # reports as not_deployed rather than down — laryngitis, not
+        # an outage.
+        "concierge": (
+            {
+                "id": family_registry.concierge.id,
+                "display_name": family_registry.concierge.display_name,
+                **(
+                    {"status": "up" if concierge.health().get("reachable") else "down",
+                     "url": settings.concierge_url}
+                    if concierge is not None
+                    else {"status": "not_deployed"}
+                ),
+            }
+            if family_registry.concierge is not None
+            else None
+        ),
         "recent_roundtrips": list(recent_roundtrips)[-25:][::-1],
     }
 

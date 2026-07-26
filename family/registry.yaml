@@ -46,3 +46,4 @@ members:
     memory:
       collection: "member_vera"
     storage_tier_hint: "hot"
+    briefing_on_wake: true
