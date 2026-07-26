@@ -1,7 +1,7 @@
 # nodes/brainstem_4070/server.py
 from typing import Any, Dict, List, Optional
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import logging
 import uuid
@@ -834,6 +834,64 @@ def household_timeline(
         raise HTTPException(status_code=502, detail=f"embedder unreachable: {exc}")
 
 
+BRIEFING_EVENT_CAP = 50
+
+
+@app.get("/members/{member_id}/briefing")
+def member_briefing(
+    member_id: str,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Sprint 6 R2: the data-only wake-up digest.
+
+    Built from exactly two sources — the member's inbox custody
+    metadata and the shared:household timeline — windowed to the
+    member's last sleep edge (24h fallback if it has never slept on
+    this store's watch). Privacy invariant: queued message *contents*
+    never appear here (custody metadata only — the member reads its
+    own mail when it drains), and the timeline read is the embedder's
+    shared-scope-only path, so nothing private can enter by
+    construction."""
+    _member_or_404(member_id)
+
+    asleep_since = family_state.last_asleep_at(member_id)
+    cutoff = asleep_since or (
+        datetime.now(timezone.utc) - timedelta(hours=24)
+    ).isoformat()
+
+    queued = [
+        {"msg_id": m["msg_id"], "person": m["person"], "queued_at": m["queued_at"]}
+        for m in family_state.queued_messages(member_id)
+    ]
+
+    events: List[Dict[str, Any]] = []
+    events_error = None
+    try:
+        timeline = embedder.memory_timeline(limit=200)
+        # ISO-8601 sorts lexicographically; keep what happened during
+        # the sleep window, newest first, capped.
+        events = [
+            e for e in (timeline.get("events") or [])
+            if (e.get("metadata") or {}).get("ts", "") >= cutoff
+        ][:BRIEFING_EVENT_CAP]
+    except EmbedderError as exc:
+        # A briefing with no household feed is degraded, not broken —
+        # the member still needs its mail count on wake.
+        events_error = str(exc)
+        logger.warning("briefing: timeline unavailable (%s)", exc)
+
+    return {
+        "member_id": member_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "presence": family_state.presence(member_id),
+        "since": cutoff,
+        "since_source": "last_asleep_at" if asleep_since else "24h_fallback",
+        "queued_messages": queued,
+        "household_events": events,
+        "household_events_error": events_error,
+    }
+
+
 class MemoryPromoteRequest(BaseModel):
     memory_id: str
 
@@ -1127,6 +1185,7 @@ def root():
                 "/members/{member_id}/memory/promote",
                 "/household/events",
                 "/household/timeline",
+                "/members/{member_id}/briefing",
             ],
         },
         "member_loading_contract": {

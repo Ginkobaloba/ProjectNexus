@@ -51,6 +51,9 @@ class FamilyState:
         # msg_id -> record, insertion-ordered per member (dicts preserve
         # insertion order, which is the drain order).
         self._inbox: Dict[str, Dict[str, dict]] = {m: {} for m in member_ids}
+        # Sprint 6 R2: sleep/wake transition timestamps, persisted with
+        # the inbox so "since you fell asleep" survives a hub restart.
+        self._presence_log: Dict[str, Dict[str, str]] = {m: {} for m in member_ids}
         self._store_path = Path(store_path) if store_path else None
         self._load()
 
@@ -71,14 +74,21 @@ class FamilyState:
             return
         if not isinstance(raw, dict):
             return
-        for member_id, msgs in raw.items():
+        # v2 files carry {"version": 2, "inbox": ..., "presence_log": ...};
+        # v1 files (Sprint 5) are the bare inbox map — read either.
+        inbox_raw = raw.get("inbox") if "version" in raw else raw
+        presence_raw = raw.get("presence_log", {}) if "version" in raw else {}
+        for member_id, msgs in (inbox_raw or {}).items():
             # Messages for members no longer in the registry are kept on
             # disk (never silently dropped) but not loaded.
             if member_id in self._inbox and isinstance(msgs, dict):
                 self._inbox[member_id] = msgs
+        for member_id, log in (presence_raw or {}).items():
+            if member_id in self._presence_log and isinstance(log, dict):
+                self._presence_log[member_id] = log
 
     def _flush_locked(self) -> None:
-        """Write the inbox to disk. Caller holds the lock. A flush
+        """Write the store to disk. Caller holds the lock. A flush
         failure must not fail the request (same posture as the token
         and session stores)."""
         if self._store_path is None:
@@ -86,7 +96,12 @@ class FamilyState:
         try:
             self._store_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._store_path.with_suffix(self._store_path.suffix + ".tmp")
-            tmp.write_text(json.dumps(self._inbox, indent=2), encoding="utf-8")
+            payload = {
+                "version": 2,
+                "inbox": self._inbox,
+                "presence_log": self._presence_log,
+            }
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             os.replace(tmp, self._store_path)
         except OSError as exc:
             logger.warning("inbox store flush failed: %s", exc)
@@ -105,6 +120,20 @@ class FamilyState:
             )
         with self._lock:
             self._presence[member_id] = state
+            # R2: sleep and wake edges are what the briefing windows on.
+            now = datetime.now(timezone.utc).isoformat()
+            if state == "asleep":
+                self._presence_log[member_id]["last_asleep_at"] = now
+            elif state == "awake":
+                self._presence_log[member_id]["last_awake_at"] = now
+            self._flush_locked()
+
+    def last_asleep_at(self, member_id: str) -> Optional[str]:
+        """When the member most recently went to sleep, or None if it
+        has never slept on this store's watch."""
+        self._check(member_id)
+        with self._lock:
+            return self._presence_log[member_id].get("last_asleep_at")
 
     # -- inbox ---------------------------------------------------------
 

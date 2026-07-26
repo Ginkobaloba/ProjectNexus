@@ -12,7 +12,7 @@ spec file. Nothing in here special-cases any particular member.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
@@ -105,8 +105,29 @@ class FamilyMember(_StrictModel):
         return v
 
 
+class Concierge(_StrictModel):
+    """Staff, not family (Sprint 6 R1): no memory block — the concierge
+    has no scope of its own and works only from what it is handed —
+    and no storage_tier_hint, because its weights live pinned on the
+    4070, never tiered."""
+
+    id: str
+    display_name: str
+    spec_file: str
+    model: MemberModel
+    runtime: MemberRuntime
+
+    @field_validator("id")
+    @classmethod
+    def _concierge_sane_id(cls, v: str) -> str:
+        if not v or not v.replace("_", "").replace("-", "").isalnum():
+            raise ValueError(f"concierge id {v!r} must be alphanumeric (plus _ and -)")
+        return v
+
+
 class FamilyRegistry(_StrictModel):
     members: List[FamilyMember]
+    concierge: Optional[Concierge] = None
 
     def get(self, member_id: str) -> FamilyMember:
         for m in self.members:
@@ -166,6 +187,21 @@ def load_registry(registry_path: Path | str, repo_root: Path | str | None = None
             )
         if not spec_path.read_text(encoding="utf-8").strip():
             raise RegistryError(f"member {m.id!r}: spec file {m.spec_file!r} is empty")
+
+    if registry.concierge is not None:
+        c = registry.concierge
+        if c.id in seen:
+            raise RegistryError(
+                f"concierge id {c.id!r} collides with a family member id — "
+                "staff and family are different things"
+            )
+        c_spec = repo_root / c.spec_file
+        if not c_spec.is_file():
+            raise RegistryError(
+                f"concierge {c.id!r}: spec file {c.spec_file!r} not found under {repo_root}"
+            )
+        if not c_spec.read_text(encoding="utf-8").strip():
+            raise RegistryError(f"concierge {c.id!r}: spec file {c.spec_file!r} is empty")
 
     logger.info(
         "family registry loaded: %d member(s): %s",
