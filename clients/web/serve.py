@@ -26,6 +26,12 @@ Scope boundaries (see the Sprint 3a brief):
       header through untouched if the browser sent one. Auth is Sprint 3b.
     - Does not invent session semantics. It forwards X-Session-Id through
       untouched. The client mints it, the Sprint 2 memory work consumes it.
+    - Sprint 5: the family hub endpoints (GET /family, POST
+      /members/{id}/chat, GET /members/{id}/inbox/{msg_id}) are proxied
+      the same way - allowlisted, headers forwarded untouched, no new
+      logic. /family is anonymous like the other status endpoints; the
+      other two need the browser's Authorization header, which this
+      proxy already forwards.
 
 Stdlib only, on purpose - drop it on any box with Python and run it.
 
@@ -43,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import socket
 import sys
 import urllib.error
@@ -67,11 +74,19 @@ FALLBACK_CONFIG: Dict[str, Any] = {
 # Only these brainstem paths are proxied. An allowlist keeps this from
 # being an open relay: it forwards the client round trip and the status
 # polling, nothing else.
-PROXY_GET = {"/fabric/status", "/cortex/health", "/health"}
+PROXY_GET = {"/fabric/status", "/cortex/health", "/health", "/family"}
 PROXY_POST = {"/generate"}
 
-# /generate waits on the 4090 model, which is deliberately slow under
-# enforce-eager. Status checks should stay snappy.
+# Sprint 5: the family hub's per-member paths carry an id (and, for the
+# inbox, a msg_id) in the URL, so a plain set membership check does not
+# work - match them with a small regex allowlist instead. Still exactly
+# two shapes, still not an open relay.
+MEMBER_CHAT_RE = re.compile(r"^/members/[^/]+/chat$")
+MEMBER_INBOX_RE = re.compile(r"^/members/[^/]+/inbox/[^/]+$")
+
+# /generate and /members/{id}/chat both wait on the 4090 model, which is
+# deliberately slow under enforce-eager. Status checks (including the
+# family roster and inbox polling) should stay snappy.
 GENERATE_TIMEOUT = 180.0
 STATUS_TIMEOUT = 10.0
 
@@ -124,14 +139,14 @@ def make_handler(upstream: str, target_name: str):
                 self._serve_index()
             elif path == "/client/info":
                 self._serve_client_info()
-            elif path in PROXY_GET:
+            elif path in PROXY_GET or MEMBER_INBOX_RE.match(path):
                 self._proxy(path, method="GET", timeout=STATUS_TIMEOUT)
             else:
                 self._send_json(404, {"detail": f"not found: {path}"})
 
         def do_POST(self) -> None:
             path = self.path.split("?", 1)[0]
-            if path in PROXY_POST:
+            if path in PROXY_POST or MEMBER_CHAT_RE.match(path):
                 self._proxy(path, method="POST", timeout=GENERATE_TIMEOUT)
             else:
                 self._send_json(404, {"detail": f"not found: {path}"})
@@ -194,11 +209,19 @@ def make_handler(upstream: str, target_name: str):
         def _relay_response(self, status: int, headers: Any, body: bytes) -> None:
             self.send_response(status)
             content_type = "application/json"
+            retry_after = None
             if headers is not None:
                 content_type = headers.get("Content-Type", content_type)
+                retry_after = headers.get("Retry-After")
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-cache")
+            # Sprint 3c/5: cortex_unavailable and member_loading 503s carry
+            # this header. The client's JSON body also carries the same
+            # value, but forwarding the real header keeps the proxy
+            # faithful to the brainstem's actual response.
+            if retry_after is not None:
+                self.send_header("Retry-After", retry_after)
             self.end_headers()
             self.wfile.write(body)
 

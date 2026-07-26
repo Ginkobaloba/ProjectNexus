@@ -27,6 +27,16 @@ Scope boundaries (deliberate, see the Sprint 3a brief):
       This client only does its half of the contract: generate a session
       id, persist it, and send it as the X-Session-Id header on every
       request. It does not assume what the server does with it.
+    - Family hub (Sprint 5): the brainstem grew a member API alongside
+      the legacy /generate. `--family` lists the roster (GET /family,
+      anonymous). `--member ID` (or `--member` alone for the config's
+      `default_member`) chats with that member via POST
+      /members/{id}/chat instead of /generate. That endpoint does not
+      take X-Session-Id: sessions are hub-minted per (person, member)
+      on the server side. A queued (202) reply is polled from its
+      status_url until answered; a "waking" (503 member_loading) reply
+      is retried a few times honoring Retry-After. The legacy /generate
+      path (no --member) is untouched.
 
 Stdlib only, on purpose. The bench tooling in this repo follows the same
 rule so it can run from any node without a pip install. This client should
@@ -40,6 +50,10 @@ Usage:
     python nexus_cli.py --prompt "one question"  # one-shot, print, exit
     echo "piped question" | python nexus_cli.py  # one-shot from stdin
     python nexus_cli.py --new-session            # start a fresh session id
+    python nexus_cli.py --family                 # list the family roster
+    python nexus_cli.py --member vera --prompt "hi"  # one-shot chat with a member
+    python nexus_cli.py --member               # REPL, chat with config's default_member
+    python nexus_cli.py --member vera --check-inbox <msg_id>  # resume a queued reply
 
 Run  python nexus_cli.py --help  for the full flag list.
 """
@@ -148,6 +162,21 @@ class CortexDownError(BrainstemError):
         self.error_code = error_code
 
 
+class MemberLoadingError(BrainstemError):
+    """Sprint 5: a family member's model is waking up (503 member_loading).
+
+    Same shape as CortexDownError (retry_after_seconds + error_code) but a
+    distinct type: a member coming up from cold storage (weights staging,
+    llama.cpp load) can legitimately take longer than a Cortex health
+    blip, so callers give this its own, more patient, retry budget.
+    """
+
+    def __init__(self, message: str, retry_after_seconds: int, error_code: str):
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+        self.error_code = error_code
+
+
 def resolve_base_url(args: argparse.Namespace, cfg: Dict[str, Any]) -> str:
     """Decide which brainstem URL to hit.
 
@@ -196,6 +225,20 @@ def build_headers(session_id: str, token: str) -> Dict[str, str]:
         "Content-Type": "application/json",
         "X-Session-Id": session_id,
     }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def build_member_headers(token: str) -> Dict[str, str]:
+    """Headers for the Sprint 5 member endpoints (chat + inbox status).
+
+    Deliberately no X-Session-Id: member sessions are hub-minted per
+    (person, member) on the server side (Card 2), so the client has no
+    session id of its own to send here. Authorization is attached the
+    same way as the legacy path.
+    """
+    headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
@@ -344,6 +387,222 @@ def _retry_after_header_seconds(exc: urllib.error.HTTPError) -> Optional[int]:
 
 
 # --------------------------------------------------------------------------
+# Sprint 5: family hub round trips (GET /family, /members/{id}/chat,
+# /members/{id}/inbox/{msg_id})
+# --------------------------------------------------------------------------
+
+
+def call_family(base_url: str, timeout: float) -> list:
+    """GET /family: the household roster. Anonymous, like the other status
+    endpoints - presence and queue depth are dashboard material."""
+    url = f"{base_url}/family"
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise BrainstemError(
+            f"brainstem returned HTTP {exc.code} for /family: {_readable_reason(exc)}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise BrainstemError(
+            f"could not reach brainstem at {url} ({exc.reason}). "
+            f"check the target address and that the 4070 stack is up."
+        ) from exc
+    except (TimeoutError, OSError) as exc:
+        raise BrainstemError(f"request to {url} failed: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise BrainstemError(f"brainstem returned non-JSON from {url}: {exc}") from exc
+    return payload.get("members", [])
+
+
+def call_member_chat(
+    base_url: str,
+    member_id: str,
+    prompt: str,
+    headers: Dict[str, str],
+    system: Optional[str],
+    max_tokens: int,
+    temperature: Optional[float],
+    timeout: float,
+) -> Dict[str, Any]:
+    """One POST /members/{id}/chat round trip.
+
+    temperature=None omits the field entirely, so the hub applies that
+    member's own registry sampling default instead of ours.
+
+    Returns a normalized dict tagged by "kind":
+      - "ok": a live 200 MemberChatResponse, same shape as call_generate's
+        result plus member_id/display_name.
+      - "queued": a 202, the message is waiting in the member's inbox.
+    Raises MemberLoadingError on 503 member_loading (member waking up),
+    or CortexDownError on the older cortex_unavailable/cortex_timeout
+    503s that can also pass through this endpoint - same contract the
+    legacy /generate path already handles.
+    """
+    url = f"{base_url}/members/{member_id}/chat"
+    body: Dict[str, Any] = {"prompt": prompt, "max_tokens": max_tokens}
+    if system:
+        body["system"] = system
+    if temperature is not None:
+        body["temperature"] = temperature
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+
+    t0 = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            status = resp.status
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body_dict = _extract_cortex_down_body(exc)
+        detail = (
+            body_dict.get("message")
+            or body_dict.get("detail")
+            or _readable_reason(exc)
+        )
+        if exc.code == 401:
+            raise BrainstemError(
+                f"brainstem rejected the request (401 {detail}). "
+                f"Set --token, NEXUS_AUTH_TOKEN, or auth_token in config.json."
+            ) from exc
+        if exc.code == 404:
+            raise BrainstemError(f"unknown member '{member_id}': {detail}") from exc
+        if exc.code == 503:
+            retry_after = (
+                body_dict.get("retry_after_seconds")
+                or _retry_after_header_seconds(exc)
+                or 5
+            )
+            error_code = str(body_dict.get("error") or "cortex_unavailable")
+            if error_code == "member_loading":
+                raise MemberLoadingError(
+                    message=str(detail),
+                    retry_after_seconds=int(retry_after),
+                    error_code=error_code,
+                ) from exc
+            raise CortexDownError(
+                message=str(detail),
+                retry_after_seconds=int(retry_after),
+                error_code=error_code,
+            ) from exc
+        if exc.code == 502:
+            raise BrainstemError(
+                f"brainstem reached, but a downstream call failed (502): {detail}"
+            ) from exc
+        raise BrainstemError(f"brainstem returned HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise BrainstemError(
+            f"could not reach brainstem at {url} ({exc.reason}). "
+            f"check the target address and that the 4070 stack is up."
+        ) from exc
+    except (TimeoutError, OSError) as exc:
+        raise BrainstemError(f"request to {url} failed: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise BrainstemError(f"brainstem returned non-JSON from {url}: {exc}") from exc
+
+    client_ms = (time.monotonic() - t0) * 1000.0
+
+    if status == 202:
+        return {
+            "kind": "queued",
+            "msg_id": payload.get("msg_id"),
+            "member_id": payload.get("member_id", member_id),
+            "presence": payload.get("presence"),
+            "status_url": payload.get("status_url"),
+        }
+
+    usage = payload.get("usage") or {}
+    completion_tokens = usage.get("completion_tokens", 0) or 0
+    tokens_per_s = (
+        completion_tokens / (client_ms / 1000.0)
+        if client_ms > 0 and completion_tokens
+        else 0.0
+    )
+    return {
+        "kind": "ok",
+        "member_id": payload.get("member_id", member_id),
+        "display_name": payload.get("display_name", member_id),
+        "text": payload.get("text", ""),
+        "model": payload.get("model", "unknown"),
+        "finish_reason": payload.get("finish_reason"),
+        "completion_tokens": completion_tokens,
+        "prompt_tokens": usage.get("prompt_tokens", 0) or 0,
+        "client_ms": client_ms,
+        "tokens_per_s": tokens_per_s,
+    }
+
+
+def call_inbox_status(
+    base_url: str,
+    member_id: str,
+    msg_id: str,
+    headers: Dict[str, str],
+    timeout: float,
+) -> Dict[str, Any]:
+    """GET /members/{id}/inbox/{msg_id}: status/result of a queued message.
+    Only the sender can read it, which is why this needs the same auth
+    header as chat did when the message was queued."""
+    url = f"{base_url}/members/{member_id}/inbox/{msg_id}"
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = _readable_reason(exc)
+        if exc.code == 404:
+            raise BrainstemError(
+                f"no queued message {msg_id!r} for member {member_id!r} "
+                f"(wrong id, already gone, or it isn't yours): {detail}"
+            ) from exc
+        if exc.code == 401:
+            raise BrainstemError(
+                f"brainstem rejected the request (401 {detail}). check your auth token."
+            ) from exc
+        raise BrainstemError(
+            f"brainstem returned HTTP {exc.code} for inbox status: {detail}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise BrainstemError(
+            f"could not reach brainstem at {url} ({exc.reason})."
+        ) from exc
+    except (TimeoutError, OSError) as exc:
+        raise BrainstemError(f"request to {url} failed: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise BrainstemError(f"brainstem returned non-JSON from {url}: {exc}") from exc
+
+
+def poll_inbox(
+    base_url: str,
+    member_id: str,
+    msg_id: str,
+    headers: Dict[str, str],
+    poll_interval: float,
+    max_wait: float,
+    timeout: float,
+) -> Optional[Dict[str, Any]]:
+    """Poll GET /members/{id}/inbox/{msg_id} until status is "answered",
+    or give up after max_wait seconds. Checks immediately (a fast wake
+    may already have answered by the time we start), then every
+    poll_interval seconds. Returns the record on success, None on giving
+    up (the message is still legitimately queued; it is not an error)."""
+    t_start = time.monotonic()
+    while True:
+        record = call_inbox_status(base_url, member_id, msg_id, headers, timeout)
+        if record.get("status") == "answered":
+            return record
+        elapsed = time.monotonic() - t_start
+        if elapsed >= max_wait:
+            return None
+        time.sleep(min(poll_interval, max_wait - elapsed))
+
+
+# --------------------------------------------------------------------------
 # Presentation
 # --------------------------------------------------------------------------
 
@@ -357,6 +616,87 @@ def format_footer(result: Dict[str, Any]) -> str:
         f"| {result['tokens_per_s']:.1f} tok/s  "
         f"| finish: {result['finish_reason']}]"
     )
+
+
+def format_member_footer(result: Dict[str, Any]) -> str:
+    """One-line round-trip summary for a member chat reply."""
+    return (
+        f"  [{result['member_id']} ({result.get('display_name', result['member_id'])})  "
+        f"model {result['model']}  "
+        f"| {result['client_ms']:.0f} ms round trip  "
+        f"| {result['completion_tokens']} tokens  "
+        f"| {result['tokens_per_s']:.1f} tok/s  "
+        f"| finish: {result['finish_reason']}]"
+    )
+
+
+def format_family_roster(members: list) -> str:
+    """Render the GET /family roster as aligned, human-readable lines."""
+    if not members:
+        return "  (no members registered)"
+    lines = []
+    for m in members:
+        model = m.get("model", {}) or {}
+        lines.append(
+            f"  {m.get('id', '?'):<12} {m.get('display_name', '?'):<16} "
+            f"presence={m.get('presence', '?'):<8} "
+            f"queue={m.get('queue_depth', 0):<3} "
+            f"model={model.get('source', '?')} "
+            f"({model.get('quant', '?')}, ctx={model.get('context_length', '?')})"
+        )
+    return "\n".join(lines)
+
+
+MAX_MEMBER_LOADING_RETRIES = 3
+MEMBER_LOADING_WAIT_CAP = 60
+
+
+def _call_member_with_retry(
+    base_url: str,
+    member_id: str,
+    prompt: str,
+    headers: Dict[str, str],
+    args: argparse.Namespace,
+) -> Dict[str, Any]:
+    """Run /members/{id}/chat honoring both Sprint 5 retry contracts.
+
+    member_loading (waking): up to MAX_MEMBER_LOADING_RETRIES informed
+    retries, each honoring Retry-After (capped at MEMBER_LOADING_WAIT_CAP
+    seconds), because a member coming up from cold storage can
+    legitimately take longer than a Cortex health blip. If it is still
+    loading after that many retries, the MemberLoadingError propagates
+    and the caller renders a clear give-up message.
+
+    cortex_unavailable/cortex_timeout: passthrough of the same one-retry
+    contract the legacy /generate path already uses.
+    """
+    temperature = args.temperature if args.temperature_explicit else None
+    attempt = 0
+    while True:
+        try:
+            return call_member_chat(
+                base_url, member_id, prompt, headers, args.system,
+                args.max_tokens, temperature, args.timeout,
+            )
+        except MemberLoadingError as exc:
+            attempt += 1
+            if attempt > MAX_MEMBER_LOADING_RETRIES:
+                raise
+            wait = max(1, min(int(exc.retry_after_seconds or 5), MEMBER_LOADING_WAIT_CAP))
+            print(
+                f"[{member_id} loading] {exc} retrying in {wait}s "
+                f"(attempt {attempt}/{MAX_MEMBER_LOADING_RETRIES})...",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
+        except CortexDownError as exc:
+            wait = max(1, min(int(exc.retry_after_seconds or 5), 30))
+            print(f"[cortex down] {exc} retrying in {wait}s...", file=sys.stderr)
+            time.sleep(wait)
+            return call_member_chat(
+                base_url, member_id, prompt, headers, args.system,
+                args.max_tokens, temperature, args.timeout,
+            )
 
 
 def _call_with_cortex_down_retry(
@@ -414,20 +754,169 @@ def run_once(
     return 0
 
 
+def run_family(base_url: str, args: argparse.Namespace) -> int:
+    """--family: list the roster and exit. Anonymous, no token needed."""
+    try:
+        members = call_family(base_url, args.timeout)
+    except BrainstemError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 1
+    print(f"Family roster @ {base_url}")
+    print(format_family_roster(members))
+    return 0
+
+
+def _resume_hint(member_id: str, msg_id: str) -> str:
+    return f"  python nexus_cli.py --member {member_id} --check-inbox {msg_id}"
+
+
+def _drain_and_print(
+    base_url: str,
+    member_id: str,
+    queued: Dict[str, Any],
+    headers: Dict[str, str],
+    args: argparse.Namespace,
+) -> int:
+    """Print the 202 queued notice, then poll the status_url until the
+    member answers, or until the polite max wait elapses."""
+    msg_id = queued["msg_id"]
+    print(
+        f"[queued] {member_id} is {queued.get('presence', 'asleep')}; "
+        f"message queued as {msg_id}.",
+        file=sys.stderr,
+    )
+    print(
+        f"  polling {queued.get('status_url', '?')} every "
+        f"{args.poll_interval:.0f}s (giving up after {args.max_wait:.0f}s)...",
+        file=sys.stderr,
+    )
+    record = poll_inbox(
+        base_url, member_id, msg_id, headers,
+        args.poll_interval, args.max_wait, args.timeout,
+    )
+    if record is None:
+        print(
+            f"[queued] still waiting after {args.max_wait:.0f}s. "
+            f"{member_id} hasn't answered yet. Check back later with:\n"
+            + _resume_hint(member_id, msg_id),
+            file=sys.stderr,
+        )
+        return 0
+    text = (record.get("result") or {}).get("text", "")
+    print(text)
+    if not args.quiet:
+        print(f"  [{member_id}: answered after queueing, msg {msg_id}]", file=sys.stderr)
+    return 0
+
+
+def run_member_once(
+    base_url: str,
+    member_id: str,
+    prompt: str,
+    headers: Dict[str, str],
+    args: argparse.Namespace,
+) -> int:
+    """One-shot mode for --member: send a prompt via /members/{id}/chat,
+    handle the 200/202/503 branches, print the reply, return exit code."""
+    try:
+        result = _call_member_with_retry(base_url, member_id, prompt, headers, args)
+    except MemberLoadingError as exc:
+        print(
+            f"[error] {member_id} still loading after "
+            f"{MAX_MEMBER_LOADING_RETRIES} retries: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    except CortexDownError as exc:
+        print(
+            f"[error] cortex still unavailable after one retry: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    except BrainstemError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 1
+
+    if result["kind"] == "queued":
+        return _drain_and_print(base_url, member_id, result, headers, args)
+
+    print(result["text"])
+    if not args.quiet:
+        print(format_member_footer(result), file=sys.stderr)
+    return 0
+
+
+def run_check_inbox(
+    base_url: str,
+    member_id: str,
+    msg_id: str,
+    headers: Dict[str, str],
+    args: argparse.Namespace,
+) -> int:
+    """--check-inbox: resume checking a previously queued member message.
+    Prints immediately if already answered, otherwise polls the same way
+    the 202 path does."""
+    try:
+        record = call_inbox_status(base_url, member_id, msg_id, headers, args.timeout)
+    except BrainstemError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 1
+
+    if record.get("status") == "answered":
+        print((record.get("result") or {}).get("text", ""))
+        return 0
+
+    print(
+        f"[queued] {member_id} still hasn't answered msg {msg_id}. "
+        f"polling every {args.poll_interval:.0f}s "
+        f"(giving up after {args.max_wait:.0f}s)...",
+        file=sys.stderr,
+    )
+    try:
+        record = poll_inbox(
+            base_url, member_id, msg_id, headers,
+            args.poll_interval, args.max_wait, args.timeout,
+        )
+    except BrainstemError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 1
+    if record is None:
+        print(
+            f"[queued] still waiting after {args.max_wait:.0f}s. try again later with:\n"
+            + _resume_hint(member_id, msg_id),
+            file=sys.stderr,
+        )
+        return 0
+    print((record.get("result") or {}).get("text", ""))
+    return 0
+
+
 def run_repl(
     base_url: str,
     headers: Dict[str, str],
     session_id: str,
+    token: str,
     args: argparse.Namespace,
+    member_id: Optional[str] = None,
 ) -> int:
     """Interactive mode: a small REPL over the same round trip.
 
     Slash commands keep the session controls in reach without leaving the
     prompt: /new starts a fresh session id, /session prints the current one,
     /help lists commands, /exit leaves.
+
+    Sprint 5: /family lists the roster, /member ID switches to chatting
+    with that family member via /members/{id}/chat (member_id may also be
+    set from the start via --member), /legacy switches back to the plain
+    /generate path. Member mode has its own headers (no X-Session-Id;
+    member sessions are hub-minted server-side) built fresh on each turn
+    from `token`, so switching members or back to legacy never confuses
+    the two header sets.
     """
     print(f"Nexus CLI client  ->  {base_url}")
     print(f"session: {session_id}")
+    if member_id:
+        print(f"member mode: chatting with '{member_id}' via /members/{{id}}/chat")
     print("type a prompt and press enter. /help for commands, /exit to quit.\n")
 
     current_headers = headers
@@ -443,22 +932,78 @@ def run_repl(
         if line in ("/exit", "/quit"):
             return 0
         if line == "/help":
-            print("  /new      start a fresh session id")
-            print("  /session  show the current session id")
-            print("  /target   show the brainstem url in use")
-            print("  /exit     quit\n")
+            print("  /new        start a fresh session id (legacy /generate mode)")
+            print("  /session    show the current session id")
+            print("  /target     show the brainstem url in use")
+            print("  /family     list the family roster (presence, queue depth)")
+            print("  /member ID  chat with family member ID via /members/{id}/chat")
+            print("  /member     show the current member (or legacy mode)")
+            print("  /legacy     switch back to the legacy /generate endpoint")
+            print("  /exit       quit\n")
             continue
         if line == "/session":
-            print(f"  session: {current_headers['X-Session-Id']}\n")
+            print(f"  session: {current_headers.get('X-Session-Id', session_id)}\n")
             continue
         if line == "/target":
             print(f"  target: {base_url}\n")
             continue
         if line == "/new":
             fresh = load_session_id(force_new=True)
-            current_headers = build_headers(fresh, current_headers.get(
-                "Authorization", "").removeprefix("Bearer ").strip())
+            current_headers = build_headers(fresh, token)
             print(f"  new session: {fresh}\n")
+            continue
+        if line == "/family":
+            try:
+                members = call_family(base_url, args.timeout)
+                print(format_family_roster(members) + "\n")
+            except BrainstemError as exc:
+                print(f"[error] {exc}\n", file=sys.stderr)
+            continue
+        if line.startswith("/member"):
+            rest = line[len("/member"):].strip()
+            if rest:
+                member_id = rest
+                print(f"  now chatting with member '{member_id}'\n")
+            else:
+                print(f"  current member: {member_id or '(none, legacy /generate mode)'}\n")
+            continue
+        if line == "/legacy":
+            member_id = None
+            print("  switched back to legacy /generate\n")
+            continue
+
+        if member_id:
+            member_headers = build_member_headers(token)
+            try:
+                result = _call_member_with_retry(
+                    base_url, member_id, line, member_headers, args,
+                )
+            except MemberLoadingError as exc:
+                print(
+                    f"[error] {member_id} still loading after "
+                    f"{MAX_MEMBER_LOADING_RETRIES} retries: {exc}\n",
+                    file=sys.stderr,
+                )
+                continue
+            except CortexDownError as exc:
+                print(
+                    f"[error] cortex still unavailable after one retry: {exc}\n",
+                    file=sys.stderr,
+                )
+                continue
+            except BrainstemError as exc:
+                print(f"[error] {exc}\n", file=sys.stderr)
+                continue
+
+            if result["kind"] == "queued":
+                _drain_and_print(base_url, member_id, result, member_headers, args)
+                print()
+                continue
+
+            print(f"{result.get('display_name', member_id)} > {result['text']}")
+            if not args.quiet:
+                print(format_member_footer(result))
+            print()
             continue
 
         try:
@@ -526,11 +1071,35 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="one-shot mode: send this prompt, print the reply, exit")
     ap.add_argument("--quiet", action="store_true",
                     help="suppress the round-trip metadata footer")
+    ap.add_argument("--family", action="store_true",
+                    help="list the family roster (id, presence, queue depth, model) and exit")
+    ap.add_argument(
+        "--member", nargs="?", const="__member_default__", default=None, metavar="ID",
+        help="chat with a family member via /members/{id}/chat instead of the "
+             "legacy /generate. Omit ID to use config's default_member",
+    )
+    ap.add_argument(
+        "--check-inbox", default=None, metavar="MSG_ID",
+        help="resume checking/polling a previously queued member message "
+             "(requires --member)",
+    )
+    ap.add_argument(
+        "--poll-interval", type=float, default=5.0,
+        help="seconds between inbox polls while a member message is queued",
+    )
+    ap.add_argument(
+        "--max-wait", type=float, default=300.0,
+        help="max seconds to keep polling a queued member message before giving up",
+    )
     return ap
 
 
 def main(argv: Optional[list] = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    # Capture before generation defaults get filled in below: a member
+    # chat omits temperature entirely (letting the hub use that member's
+    # own registry default) unless the caller actually passed --temperature.
+    args.temperature_explicit = args.temperature is not None
     cfg = load_config(args.config)
 
     # Fill generation defaults from config when the flags were not given.
@@ -548,8 +1117,30 @@ def main(argv: Optional[list] = None) -> int:
 
     token = resolve_token(args, cfg)
 
+    if args.family:
+        return run_family(base_url, args)
+
+    # Sprint 5: --member alone (no id) means "use config's default_member".
+    member_id: Optional[str] = None
+    if args.member is not None:
+        member_id = (
+            cfg.get("default_member", "vera")
+            if args.member == "__member_default__"
+            else args.member
+        )
+
+    if args.check_inbox is not None:
+        if not member_id:
+            print("[error] --check-inbox requires --member <id>", file=sys.stderr)
+            return 2
+        return run_check_inbox(
+            base_url, member_id, args.check_inbox, build_member_headers(token), args,
+        )
+
     # Session id precedence: explicit --session-id wins; otherwise the
-    # persisted one (optionally regenerated via --new-session).
+    # persisted one (optionally regenerated via --new-session). Member
+    # chat does not use this (sessions are hub-minted server-side), but
+    # we still resolve it so /legacy and REPL mode switches work.
     if args.session_id:
         session_id = args.session_id
     else:
@@ -559,6 +1150,19 @@ def main(argv: Optional[list] = None) -> int:
 
     # One-shot if --prompt was given, or if something is piped on stdin.
     piped = not sys.stdin.isatty()
+
+    if member_id:
+        member_headers = build_member_headers(token)
+        if args.prompt is not None:
+            return run_member_once(base_url, member_id, args.prompt, member_headers, args)
+        if piped:
+            piped_prompt = sys.stdin.read().strip()
+            if not piped_prompt:
+                print("[error] empty prompt on stdin", file=sys.stderr)
+                return 2
+            return run_member_once(base_url, member_id, piped_prompt, member_headers, args)
+        return run_repl(base_url, headers, session_id, token, args, member_id=member_id)
+
     if args.prompt is not None:
         return run_once(base_url, args.prompt, headers, args)
     if piped:
@@ -568,7 +1172,7 @@ def main(argv: Optional[list] = None) -> int:
             return 2
         return run_once(base_url, piped_prompt, headers, args)
 
-    return run_repl(base_url, headers, session_id, args)
+    return run_repl(base_url, headers, session_id, token, args)
 
 
 if __name__ == "__main__":

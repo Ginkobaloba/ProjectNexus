@@ -4,6 +4,7 @@
     "tailscale": "http://<REDACTED_TAILSCALE_IP>:5001"
   },
   "default_target": "tailscale",
+  "default_member": "vera",
   "auth_token": "",
   "generation": {
     "max_tokens": 512,

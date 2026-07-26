@@ -9,7 +9,8 @@
 
   Scope boundaries (see the Sprint 3a brief):
     - This file never touches brainstem internals. It speaks only the
-      public HTTP contract: POST /generate.
+      public HTTP contract: POST /generate, plus the Sprint 5 family hub
+      endpoints below.
     - Auth (Sprint 3b): a bearer token field. When set it is sent as
       Authorization: Bearer. The brainstem requires it on /generate;
       without a token /generate will return 401. No auth logic lives
@@ -22,16 +23,32 @@
     - Server-side session semantics belong to the Sprint 2 memory agent.
       This client does its half only: it generates a session id, persists
       it in localStorage, and sends it as X-Session-Id on every request.
+    - Family hub (Sprint 5): the people icon opens a picker populated
+      from GET /family (anonymous), showing each member's presence and
+      queue depth. Picking a member routes chat through
+      POST /members/{id}/chat instead of /generate - no X-Session-Id on
+      that call, since member sessions are hub-minted per (person,
+      member) on the server. A 202 reply means the message is queued
+      (member asleep/busy); this client polls the returned status_url
+      (GET /members/{id}/inbox/{msg_id}) until answered, or gives up
+      after a configurable max wait and offers a manual "Check again"
+      button. A 503 member_loading (member waking up) gets a few
+      retries honoring Retry-After before giving up; the older
+      cortex_unavailable/cortex_timeout 503s still get the one-retry
+      Sprint 3c treatment on this path too. Picking "Legacy /generate"
+      restores the original behavior untouched.
 
   Why it ships with a companion proxy (clients/web/serve.py):
     The brainstem does not send CORS headers, so a browser page loaded
-    from a different origin cannot POST to /generate with custom headers.
-    serve.py serves THIS file and reverse-proxies the brainstem endpoints
-    on the same origin, so the round trip just works without editing the
+    from a different origin cannot POST to /generate (or /members/*)
+    with custom headers. serve.py serves THIS file and reverse-proxies
+    an allowlist of brainstem endpoints on the same origin - /generate,
+    /family, /members/{id}/chat, /members/{id}/inbox/{msg_id}, plus the
+    status endpoints - so the round trip just works without editing the
     brainstem. By default this page makes same-origin relative requests
-    ("/generate"); the Settings panel lets you point at an absolute URL
-    instead if some future deployment serves the page from the brainstem
-    directly.
+    ("/generate", "/family", ...); the Settings panel lets you point at
+    an absolute URL instead if some future deployment serves the page
+    from the brainstem directly.
 
   No build step, no dependencies. One file. Open it through serve.py.
 -->
@@ -251,6 +268,37 @@
   .btn:active { filter: brightness(1.15); }
   .upstream-line { font-size: 12px; color: var(--muted); }
   .upstream-line b { color: var(--text); font-weight: 600; }
+
+  /* ---- family sheet (Sprint 5: member picker) ---- */
+  .member-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 10px 11px;
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    margin-bottom: 8px;
+    text-align: left;
+  }
+  .member-row:active { filter: brightness(1.15); }
+  .member-row.active { border-color: var(--accent); background: var(--accent-dim); }
+  .member-row .name { font-weight: 600; flex: 1; }
+  .member-row .queue { font-size: 11px; color: var(--muted); }
+  .member-row .presence-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); flex: 0 0 auto;
+  }
+  .member-row .presence-dot.awake { background: var(--ok); }
+  .member-row .presence-dot.asleep { background: var(--muted); }
+  .member-row .presence-dot.busy, .member-row .presence-dot.waking { background: var(--warn); }
+  .family-empty { font-size: 13px; color: var(--muted); padding: 6px 2px; }
+  .resume-btn { margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -258,13 +306,14 @@
 <header>
   <div class="brand">
     <h1>Nexus</h1>
-    <span class="sub">thin client</span>
+    <span class="sub" id="modeSub">/generate</span>
   </div>
   <div class="spacer"></div>
   <div class="status" id="status">
     <span class="dot" id="statusDot"></span>
     <span id="statusText">connecting</span>
   </div>
+  <button class="icon-btn" id="familyBtn" aria-label="Family">&#128101;</button>
   <button class="icon-btn" id="settingsBtn" aria-label="Settings">&#9881;</button>
 </header>
 
@@ -328,8 +377,47 @@
       </div>
     </div>
 
+    <div class="row">
+      <div class="field">
+        <label for="pollInterval">Queue poll interval (s)</label>
+        <input id="pollInterval" type="number" min="1" max="120" step="1" />
+      </div>
+      <div class="field">
+        <label for="maxWait">Queue max wait (s)</label>
+        <input id="maxWait" type="number" min="10" max="3600" step="10" />
+      </div>
+    </div>
+    <div class="field">
+      <div class="hint">
+        Sprint 5: when a family member is asleep or busy, a chat message is
+        queued (202) instead of answered live. This client polls the
+        member's inbox at the interval above until it is answered, or
+        gives up after the max wait and offers a "Check again" button.
+      </div>
+    </div>
+
     <div class="btn-row">
       <button class="btn primary" id="saveBtn">Save &amp; close</button>
+    </div>
+  </div>
+</div>
+
+<!-- family bottom sheet (Sprint 5: member picker) -->
+<div class="overlay" id="familyOverlay">
+  <div class="sheet" role="dialog" aria-label="Family">
+    <h2>Family</h2>
+    <div class="field">
+      <div class="hint" style="margin-bottom:10px;">
+        Pick who to talk to. "Legacy /generate" is the original single-model
+        endpoint; each member below talks through
+        <code>/members/{id}/chat</code>. Presence: green = awake, amber =
+        busy/waking, grey = asleep.
+      </div>
+      <div id="familyList"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn" id="familyRefreshBtn">Refresh</button>
+      <button class="btn primary" id="familyCloseBtn">Close</button>
     </div>
   </div>
 </div>
@@ -350,6 +438,9 @@ const LS = {
   maxTokens: "nexus.maxTokens",
   temperature: "nexus.temperature",
   systemPrompt: "nexus.systemPrompt",
+  memberId: "nexus.memberId",
+  pollIntervalSec: "nexus.pollIntervalSec",
+  maxWaitSec: "nexus.maxWaitSec",
 };
 
 function lsGet(key, fallback) {
@@ -395,6 +486,13 @@ const state = {
   temperature: parseFloat(lsGet(LS.temperature, "0.7")),
   systemPrompt: lsGet(LS.systemPrompt, ""),
   busy: false,
+  // Sprint 5: "" means legacy /generate. A member id means chat goes to
+  // /members/{id}/chat instead. Persisted so a phone keeps its chosen
+  // family member across reloads, same as the session id.
+  memberId: lsGet(LS.memberId, ""),
+  pollIntervalSec: parseInt(lsGet(LS.pollIntervalSec, "5"), 10) || 5,
+  maxWaitSec: parseInt(lsGet(LS.maxWaitSec, "300"), 10) || 300,
+  familyMembers: [],
 };
 if (isNaN(state.temperature)) state.temperature = 0.7;
 
@@ -412,6 +510,21 @@ function authHeaders() {
     "Content-Type": "application/json",
     "X-Session-Id": state.sessionId,
   };
+  if (state.authToken) h["Authorization"] = "Bearer " + state.authToken;
+  return h;
+}
+
+// Sprint 5: headers for the member endpoints. Deliberately no
+// X-Session-Id - member sessions are hub-minted per (person, member) on
+// the server side, so this client has no session id of its own to send
+// there.
+function memberPostHeaders() {
+  const h = { "Content-Type": "application/json" };
+  if (state.authToken) h["Authorization"] = "Bearer " + state.authToken;
+  return h;
+}
+function memberGetHeaders() {
+  const h = {};
   if (state.authToken) h["Authorization"] = "Bearer " + state.authToken;
   return h;
 }
@@ -499,6 +612,70 @@ function sleep(ms) {
   return new Promise(function (r) { setTimeout(r, ms); });
 }
 
+// Sprint 5: poll a queued message's status_url until it is answered, or
+// give up after state.maxWaitSec. Checks immediately (a fast wake may
+// already have answered by the time we start), then every
+// state.pollIntervalSec. Never throws: network failures come back as
+// {ok:false, error}.
+async function pollInboxUntilAnswered(statusUrl) {
+  const start = performance.now();
+  const maxWaitMs = state.maxWaitSec * 1000;
+  while (true) {
+    let resp;
+    try {
+      resp = await fetch(endpoint(statusUrl), { method: "GET", headers: memberGetHeaders() });
+    } catch (e) {
+      return { ok: false, error: e };
+    }
+    if (resp.ok) {
+      let rec = null;
+      try { rec = await resp.json(); } catch (e) { /* ignore */ }
+      if (rec && rec.status === "answered") return { ok: true, record: rec };
+    }
+    const elapsedMs = performance.now() - start;
+    if (elapsedMs >= maxWaitMs) return { ok: false, timedOut: true };
+    await sleep(Math.min(state.pollIntervalSec * 1000, maxWaitMs - elapsedMs));
+  }
+}
+
+// A "still queued, check back later" message with a manual resume button,
+// for when pollInboxUntilAnswered gives up. Mirrors the CLI's
+// --check-inbox: the message is not lost, just still waiting.
+function addResumeButton(statusUrl, msgId, who) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg system";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.appendChild(document.createTextNode(
+    "Still queued (msg " + msgId + ")."
+  ));
+  const btn = document.createElement("button");
+  btn.className = "btn resume-btn";
+  btn.textContent = "Check again";
+  btn.addEventListener("click", async function onClick() {
+    btn.disabled = true;
+    btn.textContent = "checking...";
+    const outcome = await pollInboxUntilAnswered(statusUrl);
+    wrap.remove();
+    if (outcome.ok) {
+      const rtext = (outcome.record.result && outcome.record.result.text) || "";
+      addMessage("nexus", rtext, "answered after queueing  |  msg " + msgId);
+    } else if (outcome.timedOut) {
+      addMessage("system", "Still queued after " + state.maxWaitSec + "s. " + (who || "") + " hasn't answered yet.");
+      addResumeButton(statusUrl, msgId, who);
+    } else {
+      addMessage("error", "Lost contact while checking the queued reply: " +
+        (outcome.error && outcome.error.message ? outcome.error.message : outcome.error));
+    }
+  });
+  bubble.appendChild(btn);
+  wrap.appendChild(bubble);
+  log.appendChild(wrap);
+  scrollToBottom();
+}
+
+const MAX_MEMBER_LOADING_RETRIES = 3;
+
 async function sendPrompt(text) {
   if (state.busy) return;
   state.busy = true;
@@ -514,45 +691,105 @@ async function sendPrompt(text) {
   };
   if (state.systemPrompt) body.system = state.systemPrompt;
 
+  // Sprint 5: an empty memberId means the legacy /generate path,
+  // untouched. A chosen member routes through /members/{id}/chat instead,
+  // with its own header set (no X-Session-Id; see memberPostHeaders).
+  const usingMember = !!state.memberId;
+  const chatPath = usingMember ? ("/members/" + state.memberId + "/chat") : "/generate";
+  const chatHeaders = usingMember ? memberPostHeaders() : authHeaders();
+  const doFetch = () => fetch(endpoint(chatPath), {
+    method: "POST",
+    headers: chatHeaders,
+    body: JSON.stringify(body),
+  });
+
   const t0 = performance.now();
   let waitingMsg = null;
   try {
-    let resp = await generateOnce(body);
+    let resp = await doFetch();
 
-    // Sprint 3c: Cortex-unavailable retry path. One automatic retry that
-    // honors retry_after_seconds, with a friendly visible countdown.
-    if (resp.status === 503) {
+    // Sprint 3c / Sprint 5: 503 retry loop. cortex_unavailable /
+    // cortex_timeout get one informed retry (the original Sprint 3c
+    // contract, which also passes through /members/{id}/chat unchanged).
+    // member_loading gets up to MAX_MEMBER_LOADING_RETRIES: a member
+    // waking from cold storage can legitimately take longer than a
+    // Cortex health blip.
+    let memberLoadingAttempts = 0;
+    let cortexDownRetried = false;
+    while (resp.status === 503) {
       const down = await parseCortexDownBody(resp);
-      const wait = Math.max(1, Math.min(retryAfterSeconds(resp, down), 30));
-      const human = down.message ||
-        "Cortex is unavailable. Brainstem is up; this is a transient downstream failure.";
-      waitingMsg = addMessage(
-        "system",
-        human + " Retrying in " + wait + "s..."
+      const isMemberLoading = down.error === "member_loading";
+      const wait = Math.max(1, Math.min(retryAfterSeconds(resp, down), isMemberLoading ? 60 : 30));
+
+      if (isMemberLoading) {
+        memberLoadingAttempts += 1;
+        if (memberLoadingAttempts > MAX_MEMBER_LOADING_RETRIES) break;
+      } else {
+        if (cortexDownRetried) break;
+        cortexDownRetried = true;
+      }
+
+      if (waitingMsg) waitingMsg.remove();
+      const human = down.message || (
+        isMemberLoading
+          ? (state.memberId + " is loading.")
+          : "Cortex is unavailable. Brainstem is up; this is a transient downstream failure."
       );
+      const attemptNote = isMemberLoading
+        ? " Retrying in " + wait + "s... (attempt " + memberLoadingAttempts + "/" + MAX_MEMBER_LOADING_RETRIES + ")"
+        : " Retrying in " + wait + "s...";
+      waitingMsg = addMessage("system", human + attemptNote);
       await sleep(wait * 1000);
-      resp = await generateOnce(body);
+      resp = await doFetch();
     }
 
     const clientMs = performance.now() - t0;
+    if (waitingMsg) { waitingMsg.remove(); waitingMsg = null; }
+
+    // Sprint 5: 202 means the member is asleep/busy and the message is
+    // now queued. fetch() treats 202 as resp.ok, so this has to be
+    // checked before the generic !resp.ok branch below.
+    if (resp.status === 202) {
+      typing.remove();
+      const queued = await parseCortexDownBody(resp);
+      const who = queued.member_id || state.memberId || "member";
+      const waitEl = addMessage(
+        "system",
+        who + " is " + (queued.presence || "asleep") +
+        " -- message queued (" + queued.msg_id + "). Waiting..."
+      );
+      const outcome = await pollInboxUntilAnswered(queued.status_url);
+      waitEl.remove();
+      if (outcome.ok) {
+        const rtext = (outcome.record.result && outcome.record.result.text) || "";
+        addMessage("nexus", rtext, "answered after queueing  |  msg " + queued.msg_id);
+      } else if (outcome.timedOut) {
+        addMessage("system", "Still queued after " + state.maxWaitSec + "s. " + who + " hasn't answered yet.");
+        addResumeButton(queued.status_url, queued.msg_id, who);
+      } else {
+        addMessage("error", "Lost contact while waiting for a queued reply: " +
+          (outcome.error && outcome.error.message ? outcome.error.message : outcome.error));
+      }
+      return;
+    }
 
     let payload = null;
     let raw = "";
     try { raw = await resp.text(); payload = JSON.parse(raw); } catch (e) { /* non-JSON */ }
 
-    if (waitingMsg) { waitingMsg.remove(); waitingMsg = null; }
     typing.remove();
 
     if (!resp.ok) {
       if (resp.status === 503 && payload) {
-        // Second 503: give up auto-retrying. Render the human message
-        // verbatim so the user sees exactly what the brainstem says.
+        // Retries exhausted: render the human message verbatim so the
+        // user sees exactly what the brainstem says.
         const wait = retryAfterSeconds(resp, payload);
+        const isMemberLoading = payload.error === "member_loading";
         addMessage(
           "error",
-          (payload.message ||
-            "Cortex is still unavailable.") +
-          "\n\nTry again in about " + wait + " seconds."
+          (payload.message || (isMemberLoading ? "Member is still loading." : "Cortex is still unavailable.")) +
+          "\n\nTry again in about " + wait + " seconds" +
+          (isMemberLoading ? " (gave up after " + MAX_MEMBER_LOADING_RETRIES + " retries)." : ".")
         );
         return;
       }
@@ -567,15 +804,16 @@ async function sendPrompt(text) {
       return;
     }
     if (!payload || typeof payload.text !== "string") {
-      addMessage("error", "Unexpected response shape from /generate.");
+      addMessage("error", "Unexpected response shape from " + chatPath + ".");
       return;
     }
 
     const usage = payload.usage || {};
     const tokens = usage.completion_tokens || 0;
     const tps = (clientMs > 0 && tokens) ? (tokens / (clientMs / 1000)) : 0;
+    const who = usingMember ? ((payload.display_name || payload.member_id || state.memberId) + "  |  ") : "";
     const meta =
-      payload.model +
+      who + payload.model +
       "  |  " + clientMs.toFixed(0) + " ms round trip" +
       "  |  " + tokens + " tokens" +
       "  |  " + tps.toFixed(1) + " tok/s";
@@ -679,6 +917,8 @@ const els = {
   temperature: document.getElementById("temperature"),
   systemPrompt: document.getElementById("systemPrompt"),
   sessionLine: document.getElementById("sessionLine"),
+  pollInterval: document.getElementById("pollInterval"),
+  maxWait: document.getElementById("maxWait"),
 };
 
 function openSettings() {
@@ -688,6 +928,8 @@ function openSettings() {
   els.temperature.value = state.temperature;
   els.systemPrompt.value = state.systemPrompt;
   els.sessionLine.textContent = state.sessionId;
+  els.pollInterval.value = state.pollIntervalSec;
+  els.maxWait.value = state.maxWaitSec;
   loadUpstreamInfo();
   overlay.classList.add("open");
 }
@@ -700,21 +942,114 @@ function saveSettings() {
   let t = parseFloat(els.temperature.value);
   state.temperature = isNaN(t) ? 0.7 : t;
   state.systemPrompt = els.systemPrompt.value.trim();
+  state.pollIntervalSec = parseInt(els.pollInterval.value, 10) || 5;
+  state.maxWaitSec = parseInt(els.maxWait.value, 10) || 300;
 
   lsSet(LS.apiBase, state.apiBase);
   lsSet(LS.authToken, state.authToken);
   lsSet(LS.maxTokens, String(state.maxTokens));
   lsSet(LS.temperature, String(state.temperature));
   lsSet(LS.systemPrompt, state.systemPrompt);
+  lsSet(LS.pollIntervalSec, String(state.pollIntervalSec));
+  lsSet(LS.maxWaitSec, String(state.maxWaitSec));
 
   closeSettings();
   pollStatus();
 }
 
+// ----------------------------------------------------------------------
+// Family sheet (Sprint 5): pick a member from GET /family, or go back to
+// the legacy /generate endpoint.
+// ----------------------------------------------------------------------
+const familyOverlay = document.getElementById("familyOverlay");
+const familyList = document.getElementById("familyList");
+const modeSub = document.getElementById("modeSub");
+
+function updateModeSub() {
+  if (!state.memberId) {
+    modeSub.textContent = "/generate";
+    return;
+  }
+  const m = state.familyMembers.find(function (x) { return x.id === state.memberId; });
+  modeSub.textContent = m ? (m.display_name + " (" + m.presence + ")") : state.memberId;
+}
+
+function renderFamilyList() {
+  familyList.innerHTML = "";
+
+  const legacyRow = document.createElement("button");
+  legacyRow.className = "member-row" + (state.memberId ? "" : " active");
+  legacyRow.innerHTML =
+    '<span class="presence-dot ok" style="background:var(--accent);"></span>' +
+    '<span class="name">Legacy /generate</span>';
+  legacyRow.addEventListener("click", function () { selectMember(""); });
+  familyList.appendChild(legacyRow);
+
+  if (!state.familyMembers.length) {
+    const empty = document.createElement("div");
+    empty.className = "family-empty";
+    empty.textContent = "No family roster loaded yet (or GET /family failed). Tap Refresh.";
+    familyList.appendChild(empty);
+    return;
+  }
+
+  state.familyMembers.forEach(function (m) {
+    const row = document.createElement("button");
+    row.className = "member-row" + (state.memberId === m.id ? " active" : "");
+    const model = m.model || {};
+    row.innerHTML =
+      '<span class="presence-dot ' + (m.presence || "") + '"></span>' +
+      '<span class="name">' + (m.display_name || m.id) + '</span>' +
+      '<span class="queue">' + (m.presence || "?") +
+      (m.queue_depth ? (" &middot; queue " + m.queue_depth) : "") + '</span>';
+    row.addEventListener("click", function () { selectMember(m.id); });
+    familyList.appendChild(row);
+  });
+}
+
+async function loadFamily() {
+  try {
+    const resp = await fetch(endpoint("/family"), { method: "GET" });
+    if (!resp.ok) { return; }
+    const data = await resp.json();
+    state.familyMembers = data.members || [];
+  } catch (e) {
+    // Anonymous status-style call; a failure here just means the picker
+    // stays empty/stale. The chat round trip surfaces the real error.
+  }
+  renderFamilyList();
+  updateModeSub();
+}
+
+function selectMember(id) {
+  state.memberId = id;
+  lsSet(LS.memberId, id);
+  renderFamilyList();
+  updateModeSub();
+  if (id) {
+    const m = state.familyMembers.find(function (x) { return x.id === id; });
+    addMessage("system", "Now chatting with " + (m ? m.display_name : id) + " via /members/" + id + "/chat.");
+  } else {
+    addMessage("system", "Switched back to the legacy /generate endpoint.");
+  }
+}
+
+function openFamily() {
+  loadFamily();
+  familyOverlay.classList.add("open");
+}
+function closeFamily() { familyOverlay.classList.remove("open"); }
+
 document.getElementById("settingsBtn").addEventListener("click", openSettings);
 document.getElementById("saveBtn").addEventListener("click", saveSettings);
 overlay.addEventListener("click", function (e) {
   if (e.target === overlay) closeSettings();
+});
+document.getElementById("familyBtn").addEventListener("click", openFamily);
+document.getElementById("familyRefreshBtn").addEventListener("click", loadFamily);
+document.getElementById("familyCloseBtn").addEventListener("click", closeFamily);
+familyOverlay.addEventListener("click", function (e) {
+  if (e.target === familyOverlay) closeFamily();
 });
 document.getElementById("newSessionBtn").addEventListener("click", function () {
   state.sessionId = newSessionId();
@@ -736,7 +1071,8 @@ function greet() {
     "system",
     "Nexus thin client. Messages go to the 4070 brainstem and come back " +
     "with text generated by the 4090 Cortex. Session " +
-    state.sessionId.slice(0, 8) + " active. Tap the gear to configure."
+    state.sessionId.slice(0, 8) + " active. Tap the people icon to pick a " +
+    "family member, or the gear to configure."
   );
 }
 
@@ -744,6 +1080,8 @@ greet();
 autoGrow();
 pollStatus();
 setInterval(pollStatus, 15000);
+updateModeSub();
+loadFamily();
 input.focus();
 </script>
 </body>
