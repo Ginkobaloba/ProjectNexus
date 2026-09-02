@@ -11,8 +11,10 @@ talking to the same public endpoint on the 4070 brainstem.
 
 Both are deliberately a **separate artifact** from the brainstem service.
 They never import or edit brainstem code. They speak only its public HTTP
-contract: `POST /generate`. That keeps the client free to evolve, ship,
-and break without touching the running fabric.
+contract: the legacy `POST /generate`, and, as of Sprint 5, the family hub
+member API (`GET /family`, `POST /members/{id}/chat`,
+`GET /members/{id}/inbox/{msg_id}`). That keeps the client free to evolve,
+ship, and break without touching the running fabric.
 
 ## The contract these clients speak
 
@@ -27,6 +29,30 @@ and returns:
 ```json
 { "text": "...", "model": "...", "finish_reason": "stop", "usage": { ... }, "source": "cortex_4090" }
 ```
+
+### Sprint 5: the family hub member API
+
+The brainstem's Sprint 5 family hub adds a member-aware surface alongside
+`/generate`, which keeps working unchanged as the hub's default member.
+
+- `GET /family` (anonymous) - the household roster: `{members: [{id,
+  display_name, presence, queue_depth, model: {source, quant,
+  context_length}}]}`.
+- `POST /members/{id}/chat` (Bearer auth, **no** `X-Session-Id` - member
+  sessions are hub-minted per person+member on the server) - body
+  `{prompt, system?, max_tokens?, temperature?}`. Three possible
+  responses:
+  - `200` - answered live: `{member_id, display_name, text, model,
+    finish_reason, usage, session_id, turn_idx, memory_written}`.
+  - `202` - the member is asleep or busy: `{queued, msg_id, member_id,
+    presence, status_url}`. The message waits in their inbox.
+  - `503 member_loading` - the member is waking up: structured body with
+    `retry_after_seconds` and a `Retry-After` header, same shape as the
+    older `cortex_unavailable`/`cortex_timeout` 503s (which can still
+    pass through this endpoint too).
+- `GET /members/{id}/inbox/{msg_id}` (Bearer auth, sender only) - status
+  of a queued message: `{msg_id, member_id, status: "queued"|"answered",
+  queued_at, result}`. `result.text` carries the reply once answered.
 
 On every request both clients also send:
 
@@ -56,6 +82,7 @@ On every request both clients also send:
     "tailscale": "http://<REDACTED_TAILSCALE_IP>:5001"
   },
   "default_target": "tailscale",
+  "default_member": "vera",
   "auth_token": "",
   "generation": { "max_tokens": 512, "temperature": 0.7 }
 }
@@ -64,7 +91,9 @@ On every request both clients also send:
 Two named targets, same brainstem, different paths to it. The LAN address
 works on the home network. The Tailscale address works from anywhere on
 the tailnet, on or off the home network, which is why it is the default.
-Either client can also be pointed at an explicit `--url`.
+Either client can also be pointed at an explicit `--url`. `default_member`
+(Sprint 5) is which family member the CLI's `--member` flag talks to when
+you don't name one explicitly.
 
 ## CLI client
 
@@ -87,6 +116,38 @@ the same conversation thread across runs. In the REPL, `/new` starts a
 fresh session, `/session` shows the current one, `/target` shows the
 brainstem url, `/exit` quits. `python nexus_cli.py --help` lists every flag.
 
+### Talking to a family member (Sprint 5)
+
+```
+python nexus_cli.py --family                       # list the roster: id, presence, queue depth, model
+python nexus_cli.py --member vera --prompt "hi"     # one-shot chat with member "vera"
+python nexus_cli.py --member --prompt "hi"          # same, using config's default_member
+python nexus_cli.py --member vera                   # REPL in member mode
+python nexus_cli.py --member vera --check-inbox <msg_id>  # resume a queued reply later
+```
+
+`--member` (with or without an id) switches the chat round trip from the
+legacy `/generate` to `POST /members/{id}/chat`. Three things can happen:
+
+- **Answered live (200)**: printed exactly like a `/generate` reply, with
+  the member's name in the footer.
+- **Queued (202)** - the member is asleep or busy: the CLI prints the
+  `msg_id` and polls the returned `status_url` every `--poll-interval`
+  seconds (default 5s) until it is answered or `--max-wait` (default
+  300s) elapses. If it gives up, it prints the exact command to resume
+  polling later with `--check-inbox`; the message is not lost, it is
+  still sitting in the member's inbox.
+- **Waking (503 `member_loading`)**: the CLI retries up to 3 times,
+  honoring the server's `Retry-After` each time (capped at 60s), before
+  giving up with a clear error. The older `cortex_unavailable`/
+  `cortex_timeout` 503s still get the original Sprint 3c one-retry
+  treatment on this path.
+
+In the REPL, `/family` lists the roster, `/member <id>` switches to
+chatting with that member, and `/legacy` switches back to `/generate`.
+Member chat does not send `X-Session-Id`: the hub mints and persists a
+session per (person, member) itself.
+
 ## Web client
 
 The web client is `web/index.html`, a single self-contained file. The
@@ -97,9 +158,11 @@ this client needs. The browser blocks it at the preflight.
 The fix that does **not** require touching the brainstem is to serve the
 page and the API from the same origin. `web/serve.py` does exactly that:
 it serves `index.html` and reverse-proxies a small allowlist of brainstem
-endpoints (`/generate`, `/fabric/status`, `/cortex/health`, `/health`) to
-the configured 4070 address. The browser only ever talks to `serve.py`,
-same origin, no CORS, brainstem untouched.
+endpoints (`/generate`, `/fabric/status`, `/cortex/health`, `/health`,
+and, as of Sprint 5, `/family`, `/members/{id}/chat`,
+`/members/{id}/inbox/{msg_id}`) to the configured 4070 address. The
+browser only ever talks to `serve.py`, same origin, no CORS, brainstem
+untouched.
 
 ```
 cd clients/web
@@ -122,6 +185,33 @@ connection (blank means "use the proxy", which is the recommended path),
 an optional auth token, generation parameters, and the session id with a
 "new session" button. The session id is persisted in `localStorage`, so a
 phone keeps its conversation thread across reloads.
+
+### Talking to a family member (Sprint 5)
+
+The people icon in the header opens the family sheet, populated from
+`GET /family`: each member's presence (green dot = awake, amber = busy or
+waking, grey = asleep) and queue depth, plus a "Legacy /generate" row to
+go back to the original endpoint. Tapping a member routes chat through
+`POST /members/{id}/chat` instead; the header subtitle shows who you're
+currently talking to. The chosen member is persisted in `localStorage`,
+same as the session id, so a phone remembers it across reloads.
+
+- **Answered live (200)**: rendered exactly like a `/generate` reply,
+  with the member's name in the footer.
+- **Queued (202)** - the member is asleep or busy: the page shows
+  "*&lt;name&gt; is asleep -- message queued (msg_id). Waiting...*" and
+  polls the inbox status URL at the interval set in Settings ("Queue
+  poll interval", default 5s) until answered, or until "Queue max wait"
+  (default 300s) elapses. If it gives up, a "Check again" button appears
+  so you can resume polling without retyping the message.
+- **Waking (503 `member_loading`)**: shown as a countdown ("*retrying in
+  Ns... (attempt a/3)*") honoring the server's `Retry-After`, up to 3
+  attempts, before surfacing a clear error. The older
+  `cortex_unavailable`/`cortex_timeout` 503s still get the original
+  Sprint 3c one-retry treatment on this path.
+
+Member chat deliberately does not send `X-Session-Id`: the hub mints and
+persists a session per (person, member) itself.
 
 ### Future: serving the page from the brainstem directly
 

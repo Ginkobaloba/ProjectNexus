@@ -1,7 +1,8 @@
 # nodes/brainstem_4070/server.py
 from typing import Any, Dict, List, Optional
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import logging
 import uuid
@@ -11,9 +12,12 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from core.family import load_member_spec, load_registry
 from core.nas_client import NASClient
 from brainstem_4070.config import settings
 from brainstem_4070.auth import configure_store, require_token, TokenEntry
+from brainstem_4070.family_state import FamilyState
+from brainstem_4070.sessions import HubSessionStore
 from brainstem_4070.embedder_client import EmbedderClient, EmbedderError
 from brainstem_4070.stm_buffer import STMItem, stm_buffer
 from brainstem_4070.filter import basic_validation
@@ -31,7 +35,7 @@ app = FastAPI(
         "write-on-turn / retrieve-before-generate path against the "
         "embedder service."
     ),
-    version="0.4.0",
+    version="0.5.0",
 )
 
 nas = NASClient(settings.nas_url)
@@ -41,6 +45,39 @@ cortex = CortexClient(
     health_timeout=settings.cortex_health_timeout,
 )
 embedder = EmbedderClient(settings.embedder_url, timeout=settings.embedder_timeout)
+
+# Sprint 5: family hub. The registry is the single source of truth for
+# who exists; a broken registry is a boot failure by design (Card 1).
+# Relative registry paths resolve against the repo checkout root; the
+# family root (what spec_file paths are relative to) is wherever the
+# registry's family/ tree lives, so a docker override keeps working.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_registry_path = Path(settings.family_registry_path)
+if not _registry_path.is_absolute():
+    _registry_path = REPO_ROOT / _registry_path
+_family_root = _registry_path.parent.parent
+family_registry = load_registry(_registry_path, _family_root)
+member_specs = {
+    m.id: load_member_spec(m, _family_root) for m in family_registry.members
+}
+family_state = FamilyState(
+    [m.id for m in family_registry.members],
+    default_presence=settings.member_default_presence,
+    store_path=settings.inbox_store_path,
+)
+hub_sessions = HubSessionStore(settings.session_store_path)
+
+# Sprint 6 R4: Jeffery's runtime, when deployed. llama-server speaks the
+# same OpenAI-compatible API as the cortex, so the same client serves.
+# None means receptionist-with-laryngitis: data-only briefings still work.
+concierge = None
+concierge_spec = ""
+if settings.concierge_url and family_registry.concierge is not None:
+    concierge = CortexClient(
+        settings.concierge_url, timeout=settings.concierge_timeout,
+        health_timeout=settings.cortex_health_timeout,
+    )
+    concierge_spec = load_member_spec(family_registry.concierge, _family_root)
 
 # Sprint 3b: load the bearer-token store at process start. Configured
 # path is a docker named volume in production; in dev / tests it gets
@@ -324,14 +361,12 @@ def generate(
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
     auth: TokenEntry = Depends(require_token),
 ):
-    """Relay a prompt to the 4090 Cortex, retrieve-before-generate
-    against the `memory` collection, write the completed turn back, and
-    return the generated text.
+    """Relay a prompt to the 4090 Cortex, retrieve-before-generate,
+    write the completed turn back, and return the generated text.
 
     Sprint 2 Chunk B added the retrieval leg in front of the Cortex call.
     The retrieved turns are merged into the system prompt sent to Cortex.
-    Retrieval is NOT scoped to the current session by default, which is
-    the whole point of the cross-session done-criterion.
+    Cross-session recall within a member is preserved.
 
     Sprint 3b: auth is required. The validated token entry is available
     as `auth`; its name is logged and written to the metric record for
@@ -342,9 +377,27 @@ def generate(
     `message`, `session_id`, and `turn_idx` fields, plus a `Retry-After`
     header. Memory writes are skipped in that case (no assistant text to
     embed). See docs/exposure_and_cortex_down.md for the contract.
+
+    Sprint 5 Card 3: this legacy endpoint now runs as the hub's default
+    member (the registry's first entry), so its turns land in that
+    member's private scope and its retrieval sees that member's visible
+    scopes. Unscoped memory no longer exists. Member-aware callers
+    should use /members/{id}/chat instead.
     """
     session_id = _resolve_session_id(x_session_id)
+    return _run_turn(req, session_id=session_id, auth=auth,
+                     member=family_registry.members[0])
 
+
+def _run_turn(
+    req: GenerateRequest,
+    session_id: str,
+    auth: TokenEntry,
+    member,
+):
+    """The full turn pipeline (retrieve -> cortex -> write-on-turn ->
+    metrics) for a specific family member. Shared by the legacy
+    /generate endpoint and /members/{id}/chat (Card 2)."""
     t_ingress = now_ns()
     payload_bytes = len((req.prompt or "").encode("utf-8"))
     if req.system:
@@ -360,6 +413,7 @@ def generate(
         rres = embedder.memory_query(
             session_id=session_id,
             query=req.prompt,
+            member_id=member.id,
             k=RETRIEVAL_K,
         )
         matches = rres.get("matches", []) or []
@@ -402,6 +456,12 @@ def generate(
                 assistant_text=(result or {}).get("text", ""),
                 turn_idx=turn_idx,
                 ts=datetime.now(timezone.utc).isoformat(),
+                # Card 3: conversation turns default to the member's
+                # private scope; sharing is a promotion, never a write.
+                scope=f"private:{member.id}",
+                member_id=member.id,
+                origin="conversation",
+                participants=[auth.name],
                 model_used=(result or {}).get("model", ""),
                 user_token_count=usage.get("prompt_tokens", 0) or 0,
                 assistant_token_count=usage.get("completion_tokens", 0) or 0,
@@ -456,6 +516,7 @@ def generate(
             "memory_written": memory_written,
             "memory_chunks": memory_chunks,
             "token_name": auth.name,
+            "member_id": member.id,
             "error": err,
         },
     )
@@ -498,6 +559,567 @@ def generate(
         session_id=session_id,
         turn_idx=turn_idx if memory_written else None,
         memory_written=memory_written,
+    )
+
+
+# --------------------------------------------------------------------------
+# Sprint 5 Card 2: family hub — member routing, presence, inbox v0
+# --------------------------------------------------------------------------
+
+# The member_loading contract generalizes the Sprint 3c cortex-down
+# shape: structured 503 body + Retry-After header, stable string code.
+# A client that already handles cortex_unavailable branches the same way
+# here, just with a longer suggested wait (weights staging + llama.cpp
+# load, not a health-check blip).
+MEMBER_LOADING = "member_loading"
+
+
+class MemberChatRequest(BaseModel):
+    prompt: str
+    system: Optional[str] = None
+    max_tokens: int = 512
+    # None means "use this member's registry sampling default" — the
+    # member's identity includes how it likes to sample.
+    temperature: Optional[float] = None
+
+
+class MemberChatResponse(BaseModel):
+    member_id: str
+    display_name: str
+    text: str
+    model: str
+    finish_reason: Optional[str] = None
+    usage: dict
+    session_id: str
+    turn_idx: Optional[int] = None
+    memory_written: bool = False
+
+
+class PresenceUpdateRequest(BaseModel):
+    presence: str
+
+
+def _member_or_404(member_id: str):
+    try:
+        return family_registry.get(member_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown member '{member_id}'")
+
+
+def _live_member_turn(
+    member,
+    auth: TokenEntry,
+    prompt: str,
+    system: Optional[str],
+    max_tokens: int,
+    temperature: Optional[float],
+):
+    """One live turn with a member on the caller's hub-minted session:
+    spec as base system, caller system layered after, registry sampling
+    defaults when the caller didn't override. Shared by live chat and
+    the inbox drain. Returns (session_id, result) where result is a
+    GenerateResponse or the cortex-down JSONResponse."""
+    session_id, stored_turn_idx = hub_sessions.get_or_mint(auth.name, member.id)
+    if session_id not in _turn_idx_by_session:
+        # First turn since a restart: seed the runtime counter from the
+        # durable copy instead of silently restarting at 0.
+        _turn_idx_by_session[session_id] = stored_turn_idx
+
+    spec = member_specs[member.id]
+    caller_system = (system or "").strip()
+    effective_system = f"{spec}\n\n{caller_system}" if caller_system else spec
+    effective_temperature = (
+        temperature
+        if temperature is not None
+        else float(member.runtime.sampling_defaults.get("temperature", 0.7))
+    )
+
+    result = _run_turn(
+        GenerateRequest(
+            prompt=prompt,
+            system=effective_system,
+            max_tokens=max_tokens,
+            temperature=effective_temperature,
+        ),
+        session_id=session_id,
+        auth=auth,
+        member=member,
+    )
+    if not isinstance(result, JSONResponse):
+        hub_sessions.record_turn(auth.name, member.id, _turn_idx_by_session[session_id])
+    return session_id, result
+
+
+def _drain_inbox(member_id: str) -> int:
+    """Card 5: answer a freshly-awake member's queued messages in
+    arrival order through the normal chat path — same sessions, same
+    memory scoping, same metrics as a live turn. Stops early if the
+    cortex goes down mid-drain (messages stay queued for the next
+    wake). Returns how many messages were answered."""
+    member = family_registry.get(member_id)
+    answered = 0
+
+    # Sprint 6 R5: the freshly-awake member triages with context. The
+    # briefing rides as system context on the FIRST drained turn only —
+    # after that the member is oriented and extra repetition is noise.
+    # Members can decline via the registry flag.
+    briefing_block = None
+    queued_now = family_state.queued_messages(member_id)
+    if member.briefing_on_wake and queued_now:
+        briefing = _build_briefing(member_id)
+        briefing_block = _spoken_briefing(briefing)
+        if briefing_block is None:
+            briefing_block = (
+                "Wake-up briefing (data digest; every fact traces to hub "
+                "state):\n" + json.dumps(briefing, indent=2)
+            )
+        briefing_block = (
+            "You just woke up. " + briefing_block.strip()
+            + "\nAnswer the queued messages in order; this context is "
+            "for orientation, not something to recite."
+        )
+
+    for msg in queued_now:
+        # The sender authenticated when the message was queued; the
+        # drain runs on their behalf with the recorded attribution.
+        sender = TokenEntry(name=msg["person"], hash="", created_at="")
+        msg_system = msg["system"]
+        briefing_attached = briefing_block is not None
+        if briefing_attached:
+            msg_system = briefing_block + (f"\n\n{msg_system}" if msg_system else "")
+        session_id, result = _live_member_turn(
+            member,
+            sender,
+            prompt=msg["prompt"],
+            system=msg_system,
+            max_tokens=msg["max_tokens"],
+            temperature=msg["temperature"],
+        )
+        if isinstance(result, JSONResponse):
+            logger.warning(
+                "inbox drain for member=%s stopped at msg=%s: cortex down",
+                member_id, msg["msg_id"],
+            )
+            break
+        family_state.complete_message(member_id, msg["msg_id"], result={
+            "text": result.text,
+            "model": result.model,
+            "session_id": session_id,
+            "turn_idx": result.turn_idx,
+            "memory_written": result.memory_written,
+        })
+        answered += 1
+        briefing_block = None  # orientation rides the first turn only
+
+        # Card 7: how long the message sat in custody before the member
+        # answered it. The generate record covers the turn itself; this
+        # record covers the waiting.
+        try:
+            queued_at = datetime.fromisoformat(msg["queued_at"])
+            queue_wait_ms = (
+                datetime.now(timezone.utc) - queued_at
+            ).total_seconds() * 1000.0
+        except (KeyError, ValueError):
+            queue_wait_ms = None
+        drain_record = MetricRecord(
+            probe_id="brainstem.inbox_drain",
+            stage="drain",
+            ingress_ns=now_ns(),
+            egress_ns=now_ns(),
+            payload_bytes=len(msg["prompt"].encode("utf-8")),
+            ok=True,
+            extra={
+                "member_id": member_id,
+                "msg_id": msg["msg_id"],
+                "queue_wait_ms": round(queue_wait_ms, 3) if queue_wait_ms is not None else None,
+                "briefing_attached": briefing_attached,
+                "token_name": msg["person"],
+            },
+        )
+        try:
+            metrics_sink.write(drain_record)
+        except Exception:
+            logger.warning("metric sink write failed", exc_info=True)
+    if answered:
+        logger.info("inbox drain: member=%s answered=%d", member_id, answered)
+    return answered
+
+
+def _member_summary(member) -> dict:
+    return {
+        "id": member.id,
+        "display_name": member.display_name,
+        "presence": family_state.presence(member.id),
+        "queue_depth": family_state.queue_depth(member.id),
+        "model": {
+            "source": member.model.source,
+            "quant": member.model.quant,
+            "context_length": member.model.context_length,
+        },
+    }
+
+
+@app.get("/family")
+def family_roster():
+    """The household roster: who exists, who is awake, queue depths.
+    Anonymous like the other status endpoints — presence is dashboard
+    material, conversations are not."""
+    return {"members": [_member_summary(m) for m in family_registry.members]}
+
+
+@app.get("/members/{member_id}")
+def member_detail(member_id: str):
+    member = _member_or_404(member_id)
+    summary = _member_summary(member)
+    summary["storage_tier_hint"] = member.storage_tier_hint
+    summary["runtime"] = {
+        "offload_policy": member.runtime.offload_policy,
+        "sampling_defaults": member.runtime.sampling_defaults,
+    }
+    return summary
+
+
+@app.post("/members/{member_id}/presence")
+def member_presence(
+    member_id: str,
+    req: PresenceUpdateRequest,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Presence is reported by the model manager (Card 4). Until it
+    exists this is also the operator's manual switch, which is exactly
+    what the tests use to exercise the queue and loading paths."""
+    _member_or_404(member_id)
+    try:
+        family_state.set_presence(member_id, req.presence)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    logger.info(
+        "presence: member=%s -> %s (set by token=%s)",
+        member_id, req.presence, auth.name,
+    )
+    # Card 5: waking up means answering what accumulated while asleep,
+    # oldest first, before anything else happens.
+    drained = _drain_inbox(member_id) if req.presence == "awake" else 0
+    return {"member_id": member_id, "presence": req.presence, "drained": drained}
+
+
+@app.get("/members/{member_id}/inbox/{msg_id}")
+def member_inbox_message(
+    member_id: str,
+    msg_id: str,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Status/result of a queued message. Only the sender can read it —
+    queued messages are custody, not memory, and custody is private.
+    A wrong-person lookup 404s rather than 403s so it doesn't confirm
+    the message exists."""
+    _member_or_404(member_id)
+    record = family_state.get_message(member_id, msg_id)
+    if record is None or record["person"] != auth.name:
+        raise HTTPException(status_code=404, detail="no such message")
+    return {
+        "msg_id": record["msg_id"],
+        "member_id": record["member_id"],
+        "status": record["status"],
+        "queued_at": record["queued_at"],
+        "result": record["result"],
+    }
+
+
+class HouseholdEventRequest(BaseModel):
+    summary: str
+    sensor_source: str
+    ts: Optional[str] = None  # defaults to now; Jetsons may batch-report
+
+
+@app.post("/household/events")
+def household_event(
+    req: HouseholdEventRequest,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Ingest a classified sensor observation into shared:household
+    (V2 Section 8 — 'the dog went outside at 5pm'). Sensor events are
+    born shared; they never pass through any private scope. The
+    reporting service's token name lands in provenance."""
+    try:
+        result = embedder.memory_event(
+            summary=req.summary,
+            sensor_source=req.sensor_source,
+            ts=req.ts or datetime.now(timezone.utc).isoformat(),
+            reported_by=auth.name,
+        )
+    except EmbedderError as exc:
+        detail = str(exc)
+        if "400" in detail:
+            raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=502, detail=f"embedder unreachable: {exc}")
+    logger.info(
+        "household event %s from sensor=%s (token=%s)",
+        result.get("id"), req.sensor_source, auth.name,
+    )
+    return result
+
+
+@app.get("/household/timeline")
+def household_timeline(
+    limit: int = 50,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Recent household feed, newest first. Authenticated: presence on
+    the roster is public-ish dashboard material, but what happened in
+    the house is not."""
+    try:
+        return embedder.memory_timeline(limit=limit)
+    except EmbedderError as exc:
+        raise HTTPException(status_code=502, detail=f"embedder unreachable: {exc}")
+
+
+BRIEFING_EVENT_CAP = 50
+
+
+def _build_briefing(member_id: str) -> Dict[str, Any]:
+    """Sprint 6 R2: the data-only wake-up digest.
+
+    Built from exactly two sources — the member's inbox custody
+    metadata and the shared:household timeline — windowed to the
+    member's last sleep edge (24h fallback if it has never slept on
+    this store's watch). Privacy invariant: queued message *contents*
+    never appear here (custody metadata only — the member reads its
+    own mail when it drains), and the timeline read is the embedder's
+    shared-scope-only path, so nothing private can enter by
+    construction."""
+    asleep_since = family_state.last_asleep_at(member_id)
+    cutoff = asleep_since or (
+        datetime.now(timezone.utc) - timedelta(hours=24)
+    ).isoformat()
+
+    queued = [
+        {"msg_id": m["msg_id"], "person": m["person"], "queued_at": m["queued_at"]}
+        for m in family_state.queued_messages(member_id)
+    ]
+
+    events: List[Dict[str, Any]] = []
+    events_error = None
+    try:
+        timeline = embedder.memory_timeline(limit=200)
+        # ISO-8601 sorts lexicographically; keep what happened during
+        # the sleep window, newest first, capped.
+        events = [
+            e for e in (timeline.get("events") or [])
+            if (e.get("metadata") or {}).get("ts", "") >= cutoff
+        ][:BRIEFING_EVENT_CAP]
+    except EmbedderError as exc:
+        # A briefing with no household feed is degraded, not broken —
+        # the member still needs its mail count on wake.
+        events_error = str(exc)
+        logger.warning("briefing: timeline unavailable (%s)", exc)
+
+    return {
+        "member_id": member_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "presence": family_state.presence(member_id),
+        "since": cutoff,
+        "since_source": "last_asleep_at" if asleep_since else "24h_fallback",
+        "queued_messages": queued,
+        "household_events": events,
+        "household_events_error": events_error,
+    }
+
+
+def _spoken_briefing(briefing: Dict[str, Any]) -> Optional[str]:
+    """Sprint 6 R4: Jeffery digests the R2 JSON into a morning report.
+
+    His entire input is the data-only briefing — the same privacy
+    boundary R2 enforces, now enforced on the prompt side too. Any
+    failure (not deployed, down, slow) returns None: R2 is the
+    contract, R4 is the voice."""
+    if concierge is None:
+        return None
+    prompt = (
+        "Prepare the wake-up briefing for family member "
+        f"{briefing['member_id']!r} from this data, and nothing else. "
+        "Every statement must trace to a field below. If a list is "
+        "empty, say so in one short line.\n\n"
+        + json.dumps(briefing, indent=2)
+    )
+    sampling = family_registry.concierge.runtime.sampling_defaults
+    t0 = now_ns()
+    try:
+        result = concierge.generate(
+            prompt=prompt,
+            system=concierge_spec,
+            max_tokens=400,
+            temperature=float(sampling.get("temperature", 0.3)),
+        )
+    except CortexError as exc:
+        logger.warning("spoken briefing unavailable (Jeffery down): %s", exc)
+        return None
+    build_ms = (now_ns() - t0) / 1e6
+    record = MetricRecord(
+        probe_id="brainstem.briefing",
+        stage="briefing",
+        ingress_ns=t0,
+        egress_ns=now_ns(),
+        payload_bytes=len(prompt.encode("utf-8")),
+        ok=True,
+        extra={
+            "member_id": briefing["member_id"],
+            "briefing_build_ms": round(build_ms, 3),
+            "briefing_tokens": (result.get("usage") or {}).get("completion_tokens", 0),
+        },
+    )
+    try:
+        metrics_sink.write(record)
+    except Exception:
+        logger.warning("metric sink write failed", exc_info=True)
+    return (result.get("text") or "").strip() or None
+
+
+@app.get("/members/{member_id}/briefing")
+def member_briefing(
+    member_id: str,
+    spoken: bool = False,
+    auth: TokenEntry = Depends(require_token),
+):
+    """R2 data digest; `?spoken=true` adds Jeffery's prose rendition
+    (R4), falling back to data-only when he isn't up."""
+    _member_or_404(member_id)
+    briefing = _build_briefing(member_id)
+    if spoken:
+        text = _spoken_briefing(briefing)
+        briefing["spoken"] = text
+        briefing["spoken_source"] = family_registry.concierge.id if (
+            text is not None and family_registry.concierge
+        ) else None
+    return briefing
+
+
+class MemoryPromoteRequest(BaseModel):
+    memory_id: str
+
+
+@app.post("/members/{member_id}/memory/promote")
+def member_memory_promote(
+    member_id: str,
+    req: MemoryPromoteRequest,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Promote one of this member's private memories into
+    shared:household (Sprint 5 Card 6).
+
+    Offer-then-confirm, per decision 3: a member may *offer* to share
+    in conversation, but this call is the person's confirmation — only
+    people hold bearer tokens, so reaching this endpoint IS the yes.
+    The embedder copies (never moves) the row and stamps the paper
+    trail: origin=promotion, promoted_from, promoted_by."""
+    _member_or_404(member_id)
+    try:
+        result = embedder.memory_promote(
+            member_id=member_id,
+            memory_id=req.memory_id,
+            promoted_by=auth.name,
+        )
+    except EmbedderError as exc:
+        detail = str(exc)
+        # Surface the embedder's own 4xx verdicts (unknown row, wrong
+        # scope) as client errors rather than a blanket 502.
+        if "404" in detail:
+            raise HTTPException(status_code=404, detail=f"no memory row {req.memory_id!r}")
+        if "400" in detail:
+            raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=502, detail=f"embedder unreachable: {exc}")
+    logger.info(
+        "promotion: member=%s row=%s by=%s -> %s (already=%s)",
+        member_id, req.memory_id, auth.name,
+        result.get("promoted_id"), result.get("already_promoted"),
+    )
+    return result
+
+
+@app.post("/members/{member_id}/chat")
+def member_chat(
+    member_id: str,
+    req: MemberChatRequest,
+    auth: TokenEntry = Depends(require_token),
+):
+    """Talk to a family member.
+
+    - awake: the turn runs now through the existing /generate path with
+      the member's spec as the base system prompt (caller system layers
+      after it, retrieved memory after that, per V2 Section 5).
+    - asleep/busy: 202 + msg_id; the message waits in the inbox.
+    - waking: structured 503 `member_loading` with Retry-After.
+
+    Sessions are hub-minted per (person, member) and persisted, so turn
+    counters survive restarts (Card 2 fixes the Sprint 2 wart).
+    """
+    member = _member_or_404(member_id)
+    presence = family_state.presence(member_id)
+
+    if presence == "waking":
+        retry_after = settings.member_loading_retry_after_seconds
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": MEMBER_LOADING,
+                "retry_after_seconds": retry_after,
+                "message": (
+                    f"{member.display_name} is loading. The hub is up; "
+                    "retry shortly or your message can be queued."
+                ),
+                "member_id": member_id,
+                "presence": presence,
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    if presence in ("asleep", "busy"):
+        msg_id = family_state.enqueue(
+            member_id,
+            prompt=req.prompt,
+            system=req.system,
+            person=auth.name,
+            max_tokens=req.max_tokens,
+            temperature=req.temperature,
+        )
+        logger.info(
+            "queued msg %s for member=%s (presence=%s, from token=%s)",
+            msg_id, member_id, presence, auth.name,
+        )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "queued": True,
+                "msg_id": msg_id,
+                "member_id": member_id,
+                "presence": presence,
+                "status_url": f"/members/{member_id}/inbox/{msg_id}",
+            },
+        )
+
+    # Awake: run the turn live on the hub-minted session.
+    session_id, result = _live_member_turn(
+        member,
+        auth,
+        prompt=req.prompt,
+        system=req.system,
+        max_tokens=req.max_tokens,
+        temperature=req.temperature,
+    )
+    if isinstance(result, JSONResponse):
+        # Cortex-down 503: pass the Sprint 3c contract through unchanged.
+        return result
+
+    return MemberChatResponse(
+        member_id=member_id,
+        display_name=member.display_name,
+        text=result.text,
+        model=result.model,
+        finish_reason=result.finish_reason,
+        usage=result.usage,
+        session_id=session_id,
+        turn_idx=result.turn_idx,
+        memory_written=result.memory_written,
     )
 
 
@@ -606,6 +1228,26 @@ def fabric_status():
         "nas": {**nas_status, "url_configured": settings.nas_url},
         "embedder": {**embedder_status, "url_configured": settings.embedder_url},
         "metrics": _metrics_summary(),
+        # Card 7: the family roster on the live status feed — presence
+        # and queue depth per member, same shape as GET /family.
+        "family": [_member_summary(m) for m in family_registry.members],
+        # Sprint 6 R3: staff on the status board too. Absent config
+        # reports as not_deployed rather than down — laryngitis, not
+        # an outage.
+        "concierge": (
+            {
+                "id": family_registry.concierge.id,
+                "display_name": family_registry.concierge.display_name,
+                **(
+                    {"status": "up" if concierge.health().get("reachable") else "down",
+                     "url": settings.concierge_url}
+                    if concierge is not None
+                    else {"status": "not_deployed"}
+                ),
+            }
+            if family_registry.concierge is not None
+            else None
+        ),
         "recent_roundtrips": list(recent_roundtrips)[-25:][::-1],
     }
 
@@ -649,12 +1291,31 @@ def root():
                 "/embedder/health",
                 "/fabric/status",
                 "/dashboard",
+                "/family",
+                "/members/{member_id}",
             ],
             "authenticated": [
                 "/generate",
                 "/embed",
                 "/stm/write",
+                "/members/{member_id}/chat",
+                "/members/{member_id}/presence",
+                "/members/{member_id}/inbox/{msg_id}",
+                "/members/{member_id}/memory/promote",
+                "/household/events",
+                "/household/timeline",
+                "/members/{member_id}/briefing",
             ],
+        },
+        "member_loading_contract": {
+            "doc": "docs/architecture_v2_family_of_models.md (Section 4.4)",
+            "status": 503,
+            "header": "Retry-After",
+            "error_codes": [MEMBER_LOADING],
+            "queued": {
+                "status": 202,
+                "body_fields": ["queued", "msg_id", "member_id", "presence", "status_url"],
+            },
         },
         "cortex_down_contract": {
             "doc": "docs/exposure_and_cortex_down.md",

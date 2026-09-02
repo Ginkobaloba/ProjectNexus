@@ -52,10 +52,16 @@
   .dot.up { background: var(--ok); }
   .dot.down { background: var(--bad); }
   .dot.unknown { background: var(--warn); }
+  .dot.presence-awake { background: var(--ok); }
+  .dot.presence-busy, .dot.presence-waking { background: var(--warn); }
+  .dot.presence-asleep { background: var(--muted); }
   .state { font-family: var(--mono); font-size: 12px; }
   .state.up { color: var(--ok); }
   .state.down { color: var(--bad); }
   .state.unknown { color: var(--warn); }
+  .state.presence-awake { color: var(--ok); }
+  .state.presence-busy, .state.presence-waking { color: var(--warn); }
+  .state.presence-asleep { color: var(--muted); }
   .kv { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .kv b { color: var(--text); font-weight: 500; }
   .link-cell { display: flex; flex-direction: column; align-items: center;
@@ -80,6 +86,7 @@
   tr:last-child td { border-bottom: none; }
   td.ok { color: var(--ok); }
   td.bad { color: var(--bad); }
+  td.queue-pending { color: var(--warn); font-weight: 600; }
   .empty { color: var(--muted); padding: 18px 4px; font-size: 13px; }
   .pill { font-family: var(--mono); font-size: 11px; padding: 1px 7px;
     border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
@@ -167,6 +174,18 @@
     </table>
   </div>
 
+  <h2>Family</h2>
+  <div class="card" style="padding: 4px 6px;">
+    <table id="family">
+      <thead>
+        <tr>
+          <th>member</th><th>presence</th><th>queue</th><th>model</th>
+        </tr>
+      </thead>
+      <tbody><tr><td colspan="4" class="empty">no family roster reported</td></tr></tbody>
+    </table>
+  </div>
+
   <footer id="footer">
     Phase 0 metric harness. Latency stats are over the rolling in-process window;
     the persistent JSONL log is the source of truth for offline analysis.
@@ -206,6 +225,39 @@ function setMetric(elId, summary, unit, primaryKey, line2) {
   el.querySelector(".big").innerHTML = fmt(summary[primaryKey]) + "<small> " + unit + "</small>";
   el.querySelector(".sub").textContent = line2(summary);
 }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[c]);
+}
+function renderFamily(members) {
+  const tbody = document.querySelector("#family tbody");
+  if (!tbody) return;
+  if (!members || !members.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">no family roster reported</td></tr>';
+    return;
+  }
+  tbody.innerHTML = members.map(m => {
+    const presence = (m.presence || "unknown").toLowerCase();
+    const known = ["awake", "busy", "waking", "asleep"].includes(presence);
+    const presenceClass = known ? "presence-" + presence : "unknown";
+    const queueDepth = m.queue_depth || 0;
+    const queueCls = queueDepth > 0 ? "queue-pending" : "";
+    const model = m.model || {};
+    const modelBits = [];
+    if (model.quant) modelBits.push(model.quant);
+    if (model.context_length) modelBits.push(model.context_length + " ctx");
+    const modelStr = modelBits.length ? modelBits.join(" &middot; ") : "--";
+    return "<tr>" +
+      "<td><div class='name'>" + esc(m.display_name || m.id || "?") + "</div>" +
+      "<div class='kv'>" + esc(m.id || "") + "</div></td>" +
+      "<td><div class='statusline'><span class='dot " + presenceClass + "'></span>" +
+      "<span class='state " + presenceClass + "'>" + esc(presence) + "</span></div></td>" +
+      "<td class='" + queueCls + "'>" + queueDepth + "</td>" +
+      "<td>" + modelStr + "</td>" +
+      "</tr>";
+  }).join("");
+}
 async function poll() {
   try {
     const res = await fetch("/fabric/status", { cache: "no-store" });
@@ -244,6 +296,8 @@ async function poll() {
 
     const runInfo = document.getElementById("run-info");
     runInfo.innerHTML = "metrics log <b>" + (m.metrics_path || "?") + "</b>";
+
+    renderFamily(d.family);
 
     const tbody = document.querySelector("#recent tbody");
     const rows = d.recent_roundtrips || [];

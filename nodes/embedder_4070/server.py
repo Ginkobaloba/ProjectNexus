@@ -16,18 +16,29 @@ API:
   GET  /health
   POST /embed         -- raw embedding for legacy callers (proxy target)
   POST /memory/write  -- write a completed turn (chunks if needed)
-  POST /memory/query  -- top-k retrieval (no default session filter)
+  POST /memory/query  -- top-k retrieval, scope-filtered per member
+
+Sprint 5 Card 3: every write carries scope/member_id/origin provenance
+and every query is filtered server-side to the querying member's
+visible scopes (private:<member> + shared:household +
+experiential:<member>). Cross-member recall is structurally impossible
+through this API; cross-session recall within a member is unchanged.
+Pre-scope rows are invisible to queries until
+scripts/migrate_memory_scopes.py grandfathers them into member #1's
+private scope.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .config import settings
 from . import chroma_store
+from . import scopes
 from .chunker import chunk_turn
 from .embed import dim, embed_texts, get_model, tokenize
 
@@ -41,7 +52,7 @@ app = FastAPI(
         "container from the brainstem for clean lifecycle and a "
         "swappable model boundary."
     ),
-    version="0.1.0",
+    version="0.2.0",
 )
 
 
@@ -67,6 +78,12 @@ class MemoryWriteRequest(BaseModel):
     assistant_token_count: int = 0
     source_service: str = ""
     tool_calls_present: bool = False
+    # Sprint 5 Card 3 provenance. scope + member_id are mandatory —
+    # unscoped rows must never exist again after the migration.
+    scope: str
+    member_id: str
+    origin: str = "conversation"
+    participants: List[str] = Field(default_factory=list)
 
 
 class MemoryWriteResponse(BaseModel):
@@ -78,9 +95,12 @@ class MemoryWriteResponse(BaseModel):
 class MemoryQueryRequest(BaseModel):
     query: str
     k: int = 5
-    # Optional metadata filters. By default we do NOT scope to the
-    # caller's session, because the Sprint 2 done-criterion is
-    # cross-session recall. Filtering is opt-in.
+    # Sprint 5 Card 3: the querying member. Mandatory — the scope
+    # filter derived from it is applied server-side on every query.
+    # (Amends Sprint 2's no-filter design: cross-session recall within
+    # a member is preserved; cross-member recall is forbidden.)
+    member_id: str
+    # Optional refinements inside the member's visible scopes.
     session_id_filter: Optional[str] = None
     exclude_parent_turn_id: Optional[str] = None
 
@@ -94,6 +114,22 @@ class MemoryMatch(BaseModel):
 
 class MemoryQueryResponse(BaseModel):
     matches: List[MemoryMatch]
+
+
+class MemoryPromoteRequest(BaseModel):
+    # The member whose private row is being shared, the row, and the
+    # person who confirmed the share. The confirmation itself happens
+    # at the hub (only people hold bearer tokens); by the time this
+    # service sees the request, consent is established.
+    member_id: str
+    memory_id: str
+    promoted_by: str
+
+
+class MemoryPromoteResponse(BaseModel):
+    promoted_id: str
+    promoted_from: str
+    already_promoted: bool
 
 
 class HealthResponse(BaseModel):
@@ -154,6 +190,15 @@ def memory_write(
     session_id = _resolve_session_id(x_session_id)
     parent_turn_id = f"{session_id}:{req.turn_idx}"
 
+    # Card 3: refuse writes that would break the scope rules — a member
+    # cannot write into another member's scopes, and every row must
+    # carry a known origin.
+    try:
+        scopes.validate_write_scope(req.scope, req.member_id)
+        scopes.validate_origin(req.origin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     body = _concatenate_turn(req.user_text, req.assistant_text)
 
     chunks = chunk_turn(
@@ -187,6 +232,12 @@ def memory_write(
             "chunk_idx": idx,
             "chunk_total": total,
             "parent_turn_id": parent_turn_id,
+            # Card 3 provenance (participants is comma-joined because
+            # Chroma metadata values must be scalars).
+            "scope": req.scope,
+            "member_id": req.member_id,
+            "origin": req.origin,
+            "participants": scopes.participants_to_meta(req.participants),
         })
 
     chroma_store.add_documents(
@@ -208,23 +259,155 @@ def memory_query(
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
 ) -> MemoryQueryResponse:
     # session id is read but not required for reads; we log it for
-    # traceability. Cross-session retrieval is the whole point of
-    # Sprint 2's done-criterion.
+    # traceability. Cross-session retrieval within a member is the
+    # Sprint 2 done-criterion and still works — the Card 3 filter cuts
+    # across members, not across sessions.
     _ = x_session_id
 
     query_vec = embed_texts([req.query])[0]
 
-    where: Optional[Dict[str, Any]] = None
-    if req.session_id_filter:
-        where = {"session_id": req.session_id_filter}
-    # exclude_parent_turn_id is rarely used (we usually do not want to
-    # echo back the in-progress turn). Chroma supports $ne via where.
-    if req.exclude_parent_turn_id:
-        where = {**(where or {}), "parent_turn_id": {"$ne": req.exclude_parent_turn_id}}
+    # Card 3: the scope filter is built server-side from member_id and
+    # is never optional. Callers cannot widen it.
+    where = scopes.build_where(
+        req.member_id,
+        session_id_filter=req.session_id_filter,
+        exclude_parent_turn_id=req.exclude_parent_turn_id,
+    )
 
     raw = chroma_store.query(query_vec, k=req.k, where=where)
     return MemoryQueryResponse(
         matches=[MemoryMatch(**m) for m in raw]
+    )
+
+
+class MemoryEventRequest(BaseModel):
+    # A classified household observation, e.g. "the dog went out the
+    # back door". Born shared (V2 Section 8) — sensor events have no
+    # private phase and no promotion step.
+    summary: str
+    sensor_source: str
+    ts: str
+    reported_by: str = ""
+
+
+class MemoryEventResponse(BaseModel):
+    id: str
+    scope: str
+
+
+@app.post("/memory/event", response_model=MemoryEventResponse)
+def memory_event(req: MemoryEventRequest) -> MemoryEventResponse:
+    """Write a household sensor event into shared:household."""
+    summary = req.summary.strip()
+    if not summary:
+        raise HTTPException(status_code=400, detail="summary must not be empty")
+    try:
+        meta = scopes.build_event_metadata(req.sensor_source, req.ts, req.reported_by)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    event_id = f"event:{meta['sensor_source']}:{uuid4().hex[:12]}"
+    embedding = embed_texts([summary])[0]
+    chroma_store.add_documents(
+        ids=[event_id],
+        documents=[summary],
+        embeddings=[embedding],
+        metadatas=[meta],
+    )
+    logger.info("memory_event %s from %s", event_id, meta["sensor_source"])
+    return MemoryEventResponse(id=event_id, scope=meta["scope"])
+
+
+class TimelineEvent(BaseModel):
+    id: str
+    text: str
+    metadata: Dict[str, Any]
+
+
+class TimelineResponse(BaseModel):
+    events: List[TimelineEvent]
+
+
+def newest_first(ids: List[str], documents: List[str],
+                 metadatas: List[Optional[Dict[str, Any]]], limit: int) -> List[Dict[str, Any]]:
+    """Order fetched rows by their ts metadata, newest first. ISO-8601
+    timestamps sort lexicographically; rows with no ts sink to the end
+    rather than masquerading as recent."""
+    rows = [
+        {"id": i, "text": d, "metadata": m or {}}
+        for i, d, m in zip(ids, documents, metadatas)
+    ]
+    rows.sort(key=lambda r: r["metadata"].get("ts") or "", reverse=True)
+    return rows[:limit]
+
+
+@app.get("/memory/timeline", response_model=TimelineResponse)
+def memory_timeline(limit: int = 50) -> TimelineResponse:
+    """Recent shared:household rows, newest first — the household feed.
+    Reads only the shared scope by construction; there is no parameter
+    that reaches anything private."""
+    limit = max(1, min(limit, 200))
+    raw = chroma_store.get_where({"scope": scopes.SHARED_SCOPE})
+    rows = newest_first(
+        raw.get("ids") or [],
+        raw.get("documents") or [],
+        raw.get("metadatas") or [],
+        limit,
+    )
+    return TimelineResponse(events=[TimelineEvent(**r) for r in rows])
+
+
+@app.post("/memory/promote", response_model=MemoryPromoteResponse)
+def memory_promote(req: MemoryPromoteRequest) -> MemoryPromoteResponse:
+    """Copy — never move — a private row into shared:household with the
+    full promotion paper trail (Sprint 5 Card 6, V2 Section 4.3).
+
+    Idempotent per source row: the shared copy has a deterministic id,
+    and re-promoting an already-promoted row is a no-op that reports
+    `already_promoted`. The private original is never modified."""
+    target_id = scopes.promoted_id(req.memory_id)
+
+    existing = chroma_store.get_by_ids([target_id])
+    if existing.get("ids"):
+        return MemoryPromoteResponse(
+            promoted_id=target_id,
+            promoted_from=req.memory_id,
+            already_promoted=True,
+        )
+
+    source = chroma_store.get_by_ids([req.memory_id])
+    if not source.get("ids"):
+        raise HTTPException(status_code=404, detail=f"no memory row {req.memory_id!r}")
+
+    source_meta = (source.get("metadatas") or [None])[0] or {}
+    try:
+        new_meta = scopes.build_promotion_metadata(
+            source_meta, req.member_id, req.promoted_by, req.memory_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    document = (source.get("documents") or [""])[0]
+    embedding = (source.get("embeddings") or [None])[0]
+    if embedding is None:
+        raise HTTPException(
+            status_code=500, detail=f"row {req.memory_id!r} has no stored embedding"
+        )
+
+    chroma_store.add_documents(
+        ids=[target_id],
+        documents=[document],
+        embeddings=[list(embedding)],
+        metadatas=[new_meta],
+    )
+    logger.info(
+        "memory_promote %s -> %s (member=%s, by=%s)",
+        req.memory_id, target_id, req.member_id, req.promoted_by,
+    )
+    return MemoryPromoteResponse(
+        promoted_id=target_id,
+        promoted_from=req.memory_id,
+        already_promoted=False,
     )
 
 
@@ -234,5 +417,8 @@ def root() -> Dict[str, Any]:
         "service": "Nexus Embedder (4070)",
         "model": settings.model_name,
         "chroma_collection": settings.chroma_collection,
-        "endpoints": ["/health", "/embed", "/memory/write", "/memory/query"],
+        "endpoints": [
+            "/health", "/embed", "/memory/write", "/memory/query",
+            "/memory/promote", "/memory/event", "/memory/timeline",
+        ],
     }

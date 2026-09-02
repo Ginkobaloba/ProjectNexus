@@ -60,6 +60,10 @@ class EmbedderClient:
         assistant_text: str,
         turn_idx: int,
         ts: str,
+        scope: str,
+        member_id: str,
+        origin: str = "conversation",
+        participants: Optional[List[str]] = None,
         model_used: str = "",
         user_token_count: int = 0,
         assistant_token_count: int = 0,
@@ -71,6 +75,10 @@ class EmbedderClient:
             "assistant_text": assistant_text,
             "turn_idx": turn_idx,
             "ts": ts,
+            "scope": scope,
+            "member_id": member_id,
+            "origin": origin,
+            "participants": participants or [],
             "model_used": model_used,
             "user_token_count": user_token_count,
             "assistant_token_count": assistant_token_count,
@@ -79,15 +87,51 @@ class EmbedderClient:
         }
         return self._post("/memory/write", payload, headers={"X-Session-Id": session_id})
 
+    def memory_event(
+        self,
+        summary: str,
+        sensor_source: str,
+        ts: str,
+        reported_by: str = "",
+    ) -> Dict[str, Any]:
+        return self._post("/memory/event", {
+            "summary": summary,
+            "sensor_source": sensor_source,
+            "ts": ts,
+            "reported_by": reported_by,
+        })
+
+    def memory_timeline(self, limit: int = 50) -> Dict[str, Any]:
+        url = f"{self.base_url}/memory/timeline"
+        try:
+            res = requests.get(url, params={"limit": limit}, timeout=self.timeout)
+            res.raise_for_status()
+            return res.json()
+        except requests.RequestException as exc:
+            raise EmbedderError(f"GET {url} failed: {exc}") from exc
+
+    def memory_promote(
+        self,
+        member_id: str,
+        memory_id: str,
+        promoted_by: str,
+    ) -> Dict[str, Any]:
+        return self._post("/memory/promote", {
+            "member_id": member_id,
+            "memory_id": memory_id,
+            "promoted_by": promoted_by,
+        })
+
     def memory_query(
         self,
         session_id: str,
         query: str,
+        member_id: str,
         k: int = 5,
         session_id_filter: Optional[str] = None,
         exclude_parent_turn_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"query": query, "k": k}
+        payload: Dict[str, Any] = {"query": query, "k": k, "member_id": member_id}
         if session_id_filter:
             payload["session_id_filter"] = session_id_filter
         if exclude_parent_turn_id:

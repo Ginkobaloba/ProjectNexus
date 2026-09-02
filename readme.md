@@ -20,10 +20,11 @@ Biological intelligence is distributed. Nerves preprocess. The brainstem filters
 ### Components
 
 1. **Jetson nodes (peripheral nervous system).** Capture raw video, audio, telemetry. Perform early filtering and compression. Push signals to the brainstem.
-2. **4070 node (brainstem).** Validates incoming signals, generates embeddings, applies instinctual rules, buffers short-term memory, and decides what is important enough to consolidate.
+2. **4070 node (brainstem).** Validates incoming signals, generates embeddings, applies instinctual rules, buffers short-term memory, and decides what is important enough to consolidate. Since Sprint 5 it also serves as the **Nexus Hub**, the family-of-models orchestration layer: `GET /family` (roster + presence + queue depths), `GET /members/{id}` (spec summary, presence, model info), `POST /members/{id}/chat` (`200` for a live reply, `202` + `msg_id` when the message is queued, `503 member_loading` + `Retry-After` when the member is waking up), `POST /members/{id}/presence`, `GET /members/{id}/inbox/{msg_id}` (poll a queued message's reply), and `POST /members/{id}/memory/promote` (share a private memory to the household). See `docs/architecture_v2_family_of_models.md` for the full design.
 3. **NAS (long-term memory).** Vector database for semantic memory, time-ordered episodic logs, knowledge graph structures, decay and deduplication. Synthetic hippocampus.
 4. **4090 node (cortex).** Hosts large-scale LLM reasoning, executes high-level planning, integrates episodic and semantic recall, and orchestrates downstream agents.
-5. **Consolidation engine (sleep node).** Re-embeds old memories, clusters and abstracts concepts, summarizes logs into narratives, enforces schema consistency, runs "synthetic dreams".
+5. **Model manager (4090 node, Sprint 5).** `nodes/model_manager_4090/` — owns weights placement and the `llama-server` lifecycle for whichever family member is resident. Tiers weights hot/warm/cold (NVMe Gen4 / NVMe Gen2 / HDD) via `ensure_hot()` staged, checksum-verified copies, since llama.cpp does not tier for us; loads/unloads `llama-server` per member and reports presence (`waking`/`awake`/etc.) back to the hub.
+6. **Consolidation engine (sleep node).** Re-embeds old memories, clusters and abstracts concepts, summarizes logs into narratives, enforces schema consistency, runs "synthetic dreams".
 
 ## Research
 

@@ -88,5 +88,19 @@ def query(
     return out
 
 
+def get_by_ids(ids: List[str]) -> Dict[str, Any]:
+    """Fetch rows by id including embeddings, so a promotion can copy a
+    row without re-embedding (same vector, same model, by definition)."""
+    coll = get_collection()
+    return coll.get(ids=ids, include=["documents", "metadatas", "embeddings"])
+
+
+def get_where(where: Dict[str, Any], limit: int = 1000) -> Dict[str, Any]:
+    """Metadata-filtered fetch (no vector search). Used by the household
+    timeline; Chroma does not sort, so callers order the rows."""
+    coll = get_collection()
+    return coll.get(where=where, limit=limit, include=["documents", "metadatas"])
+
+
 def count() -> int:
     return get_collection().count()

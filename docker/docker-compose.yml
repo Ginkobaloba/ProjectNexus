@@ -27,14 +27,36 @@ services:
       # on the auth_data named volume; mint tokens via
       # `docker compose exec brainstem python scripts/create_token.py --name <client>`.
       - BRAINSTEM_TOKEN_STORE_PATH=/data/auth/tokens.json
+      # Sprint 5 Card 1: the brainstem.Dockerfile layout drops the
+      # `nodes/` prefix (source lands at /app/brainstem_4070), so
+      # server.py's REPO_ROOT walk (parents[2] of its own file) does not
+      # land on the image's app root the way it does on a checkout.
+      # family/ is copied to /app/family in the image; point the
+      # registry loader straight at it rather than reworking the image
+      # layout to mirror the repo tree.
+      - BRAINSTEM_FAMILY_REGISTRY_PATH=/app/family/registry.yaml
       # Phase 0 metric harness: which fabric components are live this run.
       - NEXUS_BUILD_STATE=brainstem+cortex+nas+embedder
+      # Sprint 6 R3: Jeffery's llama-server, reached by compose-network
+      # DNS like nas/embedder above. Empty/removed is a supported state —
+      # config.py's concierge_url defaults to "" and briefings just fall
+      # back to the data-only digest (Card R2) by design; this is not an
+      # outage, so brainstem does NOT depend_on this service below.
+      - BRAINSTEM_CONCIERGE_URL=http://jeffery_4070:8001
     volumes:
       # Phase 0 metric harness JSONL sink, persisted on the 4070 SSD.
       - ../data/metrics:/data/metrics
       # Sprint 3b: hashed token registry. Named volume so it survives
       # container rebuilds and is the unit of backup / wipe.
       - auth_data:/data/auth
+      # Sprint 5 Card 2: hub-minted (person, member) sessions with their
+      # turn counters. Named volume so a restart does not reset every
+      # in-flight conversation's turn count back to zero.
+      - session_data:/data/sessions
+      # Sprint 5 Card 5: durable inbox of messages queued for a member
+      # that is not yet awake. Named volume so a queued message survives
+      # a brainstem restart between being written and being drained.
+      - inbox_data:/data/inbox
     depends_on:
       - nas
       - embedder
@@ -84,6 +106,59 @@ services:
     networks:
       - nexusnet
 
+  # Sprint 6 R3: Jeffery, the concierge. Staff, not family (see the
+  # concierge: block in family/registry.yaml) — an always-on receptionist
+  # pinned to this 4070 box, not a sibling the 4090 model manager tiers
+  # in and out. That distinction is exactly why this service lives here
+  # in the always-up 4070 stack instead of in
+  # Nexus-LLM-Runtime-4090/compose.llamacpp.yaml next to Vera: no
+  # offload_policy, no hot/cold weight shuffling, no wake/sleep presence
+  # dance. He is small enough (dense 8B, Q5_K_M) to just sit resident in
+  # the ~12GB of VRAM headroom decision 4 identified alongside the
+  # embedder. Command flags mirror the ones
+  # nodes/model_manager_4090/manager.py builds for member #1 (see
+  # compose.llamacpp.yaml), scaled to Jeffery's registry entry.
+  concierge:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: jeffery_4070
+    restart: unless-stopped
+    runtime: nvidia
+    ports:
+      # Hub reaches Jeffery over the compose bridge by container name
+      # (see BRAINSTEM_CONCIERGE_URL above); nothing outside this box
+      # needs to talk to him, so — unlike the brainstem's Tailscale
+      # bind — this is host-loopback only, not a Tailscale/LAN address.
+      - "127.0.0.1:8001:8001"
+    volumes:
+      # Weights bind, mirroring the ../data/metrics pattern above.
+      # Operator drops the quantized GGUF here with:
+      #   python scripts/fetch_weights.py --member jeffery --dest data/weights/concierge
+      - ../data/weights/concierge:/models
+    command:
+      - "--model"
+      - "/models/Qwen3-8B.Q5_K_M.gguf"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8001"
+      - "--ctx-size"
+      - "8192"
+      - "--n-gpu-layers"
+      - "999"
+      - "--no-mmap"
+    networks:
+      - nexusnet
+    healthcheck:
+      # llama.cpp's server-cuda image ships neither curl nor a Python
+      # interpreter, so we can't reuse the brainstem's urllib probe
+      # above; wget is present in this image, so use the generic
+      # shell-form CMD rather than assume a specific binary.
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:8001/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 
 volumes:
   chroma_data:
@@ -91,6 +166,14 @@ volumes:
   # middleware. Survives container restart and rebuild. Backed up by
   # backing up the docker volume.
   auth_data:
+  # Sprint 5 Card 2: hub-minted (person, member) sessions and their turn
+  # counters. Survives container restart and rebuild. Backed up by
+  # backing up the docker volume.
+  session_data:
+  # Sprint 5 Card 5: queued messages awaiting a member's wake (the
+  # durable inbox). Survives container restart and rebuild. Backed up by
+  # backing up the docker volume.
+  inbox_data:
 
 
 networks:

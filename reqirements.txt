@@ -11,3 +11,10 @@ fastapi
 uvicorn[standard]
 sentence-transformers
 pydantic-settings
+pyyaml
+huggingface_hub
+# nodes/model_manager_4090/manager.py imports requests directly. It used to
+# arrive transitively via huggingface_hub, but hf_hub 1.x moved to httpx and
+# dropped the requests dependency, so a fresh install no longer gets it and
+# test collection fails outright. Declare it.
+requests

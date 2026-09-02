@@ -1,0 +1,40 @@
+services:
+  llamacpp:
+    container_name: llamacpp-vera
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+
+    # --- GPU ---
+    runtime: nvidia
+
+    # --- Networking ---
+    ports:
+      - "8000:8000"
+
+    # --- Weights mount (hot tier only — see README on why cold/mmap is avoided) ---
+    volumes:
+      - "D:/family_weights/hot:/models"
+
+    # --- Environment ---
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+    # --- llama-server flags (mirrors what nodes/model_manager_4090/manager.py
+    #     builds for family/registry.yaml member #1, "vera": Qwen3-30B-A3B
+    #     GGUF Q4_K_M, context_length 32768, offload_policy vram_then_ram) ---
+    command:
+      - "--model"
+      - "/models/Qwen3-30B-A3B-Instruct-2507.Q4_K_M.gguf"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--ctx-size"
+      - "32768"
+      - "--n-gpu-layers"
+      - "999"
+      - "--no-mmap"
+
+    # --- Keep container alive for interactive or server use ---
+    tty: true
+    stdin_open: true

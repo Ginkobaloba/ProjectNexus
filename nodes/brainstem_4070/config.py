@@ -57,6 +57,31 @@ class Settings(BaseSettings):
     cortex_down_retry_after_seconds: int = 5
     cortex_timeout_retry_after_seconds: int = 15
 
+    # --Family hub-- Sprint 5.
+    # Registry of family members (V2 doc Section 4.1). Relative paths
+    # resolve against the repo root on a checkout; in docker, override
+    # with BRAINSTEM_FAMILY_REGISTRY_PATH to wherever the image mounts
+    # the family/ tree.
+    family_registry_path: str = "family/registry.yaml"
+    # Presence before the model manager (Card 4) reports in. "awake"
+    # keeps the current always-on cortex deployment working through the
+    # member endpoints; tests override to exercise queue/loading paths.
+    member_default_presence: str = "awake"
+    # Hub-minted (person, member) sessions, persisted so restarts stop
+    # resetting turn counters. Docker named volume in production.
+    session_store_path: str = "/data/sessions/hub_sessions.json"
+    # Retry-After for the member_loading 503 — weights staging plus a
+    # llama.cpp load is tens of seconds, not the cortex-down 5s.
+    member_loading_retry_after_seconds: int = 20
+    # Durable inbox (Card 5): queued messages survive hub restarts.
+    # Docker named volume in production, like the token store.
+    inbox_store_path: str = "/data/inbox/inbox.json"
+    # --Concierge-- Sprint 6 (V1.5 receptionist). Jeffery's llama-server
+    # on this 4070 host. Empty = not deployed: spoken briefings fall
+    # back to the data-only digest and everything else works.
+    concierge_url: str = ""
+    concierge_timeout: float = 60.0
+
     # Service
     # Inside the container the brainstem listens on 0.0.0.0 so compose-
     # network peers (embedder, nas) can reach it and the healthcheck can
