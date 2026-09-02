@@ -146,6 +146,9 @@ class FakeMemory:
         return {"reachable": self.embedder_reachable}
 
     # -- embedder.memory_write ------------------------------------------
+    # Sprint 5 Card 3: the real client now requires scope + member_id
+    # provenance on every write; the fake mirrors the signature and
+    # stores the fields so tests can assert on them.
     def memory_write(
         self,
         session_id: str,
@@ -153,6 +156,10 @@ class FakeMemory:
         assistant_text: str,
         turn_idx: int,
         ts: str,
+        scope: str,
+        member_id: str,
+        origin: str = "conversation",
+        participants: Optional[List[str]] = None,
         model_used: str = "",
         user_token_count: int = 0,
         assistant_token_count: int = 0,
@@ -168,6 +175,10 @@ class FakeMemory:
                 "assistant_text": assistant_text,
                 "turn_idx": turn_idx,
                 "ts": ts,
+                "scope": scope,
+                "member_id": member_id,
+                "origin": origin,
+                "participants": list(participants or []),
                 "model_used": model_used,
             }
         )
@@ -178,6 +189,7 @@ class FakeMemory:
         self,
         session_id: str,
         query: str,
+        member_id: str,
         k: int = 5,
         session_id_filter: Optional[str] = None,
         exclude_parent_turn_id: Optional[str] = None,
@@ -185,6 +197,7 @@ class FakeMemory:
         self.last_query = {
             "session_id": session_id,
             "query": query,
+            "member_id": member_id,
             "k": k,
             "session_id_filter": session_id_filter,
         }
@@ -272,6 +285,10 @@ def brainstem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Brain
 
     monkeypatch.setenv("BRAINSTEM_TOKEN_STORE_PATH", str(store_path))
     monkeypatch.setenv("BRAINSTEM_METRICS_PATH", str(metrics_path))
+    # Sprint 5: the hub keeps durable session + inbox stores; point them
+    # at tmp so the suite stays hermetic.
+    monkeypatch.setenv("BRAINSTEM_SESSION_STORE_PATH", str(tmp_path / "sessions.json"))
+    monkeypatch.setenv("BRAINSTEM_INBOX_STORE_PATH", str(tmp_path / "inbox.json"))
 
     # Re-import the brainstem package so the new env vars take effect.
     for mod in list(sys.modules):

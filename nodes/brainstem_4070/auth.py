@@ -83,6 +83,15 @@ _SCRYPT_DKLEN = 32
 _SCRYPT_SALT_BYTES = 16
 
 
+def _scrypt_maxmem(n: int, r: int) -> int:
+    """OpenSSL needs `128 * n * r` bytes for the scrypt core PLUS its own
+    allocation overhead. Passing exactly 128*n*r trips
+    "[digital envelope routines] memory limit exceeded" under OpenSSL 3.x
+    (observed with Python 3.13.3 / OpenSSL 3.0.16). Double it: the limit
+    exists to stop absurd parameters, not to shave the last megabyte."""
+    return 2 * 128 * n * r
+
+
 def _scrypt_hash(token: str) -> str:
     salt = secrets.token_bytes(_SCRYPT_SALT_BYTES)
     dk = hashlib.scrypt(
@@ -92,7 +101,7 @@ def _scrypt_hash(token: str) -> str:
         r=_SCRYPT_R,
         p=_SCRYPT_P,
         dklen=_SCRYPT_DKLEN,
-        maxmem=128 * _SCRYPT_N * _SCRYPT_R,  # enough headroom for the given N,r
+        maxmem=_scrypt_maxmem(_SCRYPT_N, _SCRYPT_R),
     )
     return (
         f"$scrypt$N={_SCRYPT_N},r={_SCRYPT_R},p={_SCRYPT_P}$"
@@ -131,7 +140,7 @@ def _scrypt_verify(stored: str, token: str) -> bool:
             r=r,
             p=p,
             dklen=len(expected),
-            maxmem=128 * n * r,
+            maxmem=_scrypt_maxmem(n, r),
         )
     except (ValueError, MemoryError):
         return False
