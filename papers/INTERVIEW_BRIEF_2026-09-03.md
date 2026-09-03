@@ -6,15 +6,15 @@ This is the talk track, not the papers. Four lengths: 30 seconds, 2 minutes, one
 
 ## The 30-second pitch
 
-Nexus is a household of persistent AI family members running on my own hardware. Each member is a model plus a written constitution plus a private memory of every conversation it has had with us. Members share a household memory that the home's sensors feed. Privacy is the default and sharing is an explicit act enforced by provenance metadata at the retrieval layer, not by the model. The part I care most about: a member's identity lives in its spec and its memory, not in its weights, so I can swap the model underneath and the member survives. That claim started as a paper. Sprint 5 turned it into code.
+Nexus is a household of persistent AI family members running on my own hardware. Each member is a model plus a written constitution plus a private memory of every conversation it has had with us. Members share a household memory that the home's sensors feed. Privacy is the default and sharing is an explicit act enforced by provenance metadata at the retrieval layer, not by the model. The part I care most about: a member's identity lives in its spec and its memory, not in its weights, so the design lets me swap the model underneath and keep the member. That claim started as a paper. Sprint 5 built the memory layer that makes it possible; the swap itself has not been exercised yet.
 
 ## The 2-minute version
 
 Nexus started in 2025 as a biologically inspired architecture: Jetson edge devices as nerves, a 4070 as brainstem, a NAS as hippocampus, a 4090 as cortex, and a planned sleep node for consolidation. I wrote three drafts around it: the architecture itself, a framework for continuity of self in memory-bearing agents, and a piece on containerized agents as portable, replicable units.
 
-By mid-2026 the original bet had lost. Splitting one model across the 4090 and 4070 is slower than offloading to system RAM on the 4090 host, and llama.cpp now does that offload natively. Frontier labs shipped the inference side of the thesis. So I wrote a decision record on 2026-07-25 and reshaped the project around what commodity hardware can offer that a hosted model cannot: identity, memory, provenance, and physical grounding in one home.
+By mid-2026 the original bet had lost. Once llama.cpp could offload from VRAM to system RAM natively, splitting one model across the 4090 and 4070 no longer had a case: cross-device tensor traffic costs more than the offload does. Frontier labs shipped the inference side of the thesis. So I wrote a decision record on 2026-07-25 and reshaped the project around what commodity hardware can offer that a hosted model cannot: identity, memory, provenance, and physical grounding in one home.
 
-The V2 shape is a hub on the 4070 (auth, member routing, scope-filtered retrieval, write-on-turn, a durable inbox per member), an embedder service with Chroma next to it, a model manager on the 4090 that stages GGUF weights across hot, warm and cold storage tiers and runs one llama-server for whichever member is awake, and a NAS for the episodic log and cold weights. Memory has three scopes: private per member, shared household, and experiential (reserved for a member's own sensor platform). The scope filter is built server-side inside the embedder. There is no query-all path, so cross-member recall is structurally impossible through the API. The first member, Vera, runs Qwen3-30B-A3B at Q4 on the 4090. Jeffery, a dense 8B concierge on the 4070, holds messages for sleeping members and writes their wake-up briefing from shared scope only. He cannot read private memory by construction, and the tests plant a private row and assert it never surfaces.
+The V2 shape is a hub on the 4070 (auth, member routing, scope-filtered retrieval, write-on-turn, a durable inbox per member), an embedder service with Chroma next to it, a model manager on the 4090 that stages GGUF weights across hot, warm and cold storage tiers and runs one llama-server for whichever member is awake, and a NAS for the episodic log and cold weights. Memory has three scopes: private per member, shared household, and experiential (reserved for a member's own sensor platform). The scope filter is built server-side inside the embedder. There is no query-all path, so cross-member recall is structurally impossible through the API. The first member, Vera, is registered as Qwen3-30B-A3B at Q4 on the 4090. Jeffery, a dense 8B concierge registered on the 4070, holds messages for sleeping members and writes their wake-up briefing from shared scope only. He cannot read private memory by construction, and the briefing test queues a message carrying a marker phrase and asserts the phrase never appears in any briefing payload.
 
 Adding a second member is a data operation: download a GGUF, write a registry entry and a spec file. No code change.
 
@@ -39,16 +39,18 @@ people (CLI / web)
       v                                             |  (seam BUILT, Jetsons
 +------ 4090 host ------+                   +-------+--------+   not running)
 | MODEL MANAGER  BUILT  |                   | JETSON household|
-| ensure_hot() tiering  |                   | feed  PLANNED   |
-| llama-server per      |                   +-----------------+
+| ensure_hot() tiering: |                   | feed  PLANNED   |
+| hot 2TB Gen4 NVMe,    |                   +-----------------+
+| warm 1TB Gen2 NVMe    |
+| llama-server per      |
 | member (Vera, 30B-A3B)|
 +-----------------------+
       |  cold weights, episodic log
       v
 +------ NAS -----------+       +-- CONSOLIDATION / sleep node --+
 | episodic store BUILT |       | re-embed, cluster, summarize    |
-| hot 2TB Gen4 / warm  |       | PLANNED (package is empty)      |
-| 1TB Gen2 / cold 6TB  |       +---------------------------------+
+| cold weight tier:    |       | PLANNED (package is empty)      |
+| 6TB HDD              |       +---------------------------------+
 +----------------------+
 ```
 
@@ -58,7 +60,7 @@ Legend: BUILT means code plus tests in the repo and merged to main. "Seam built"
 
 **The claim.** Identity lives in structure, not weights: semantic memory, episodic history, schemas, values. Replace the model and identity persists; delete the memory and it dies. The paper proposes a continuity protocol: snapshot the identity structures, rebind the new model to them, validate self-recognition and value preservation, rehearse, reset only transient state, revert on failure.
 
-**What got built.** This is the paper that came true. `family/registry.yaml` plus `family/vera/spec.md` are the constitution, versioned in git because they are the identity. Private Chroma scope per member is the memory. The model manager swaps weights and reports presence. `scripts/migrate_memory_scopes.py` grandfathers every pre-V2 memory into member #1's private scope, which is the "snapshot and rebind" step of the protocol executed against real data. Sessions are hub-minted per (person, member) pair and persisted server-side.
+**What got built.** This is the paper the code implements most directly. `family/registry.yaml` plus `family/vera/spec.md` are the constitution, versioned in git because they are the identity. Private Chroma scope per member is the memory. The model manager swaps weights and reports presence. `scripts/migrate_memory_scopes.py` grandfathers every pre-V2 memory into member #1's private scope, which is the "snapshot and rebind" step of the protocol executed against real data. Sessions are hub-minted per (person, member) pair and persisted server-side.
 
 **What is not built.** The validation step (self-recognition and value-preservation tests after a model swap) and the rehearsal step. Those are the natural next bench task: swap Vera's weights, run her report card, confirm she still recognizes her own history.
 
@@ -72,7 +74,7 @@ Legend: BUILT means code plus tests in the repo and merged to main. "Seam built"
 
 **What the repo falsified.** The core thesis of Section 1, that value comes from distributing one cognition across GPUs. The V2 decision record calls multi-GPU tensor splitting a confirmed dead end. The 4070 stayed valuable as the always-on hub, not as half of an inference fabric. The sleep node and the Jetson classifier remain designed, not running. Forgetting and decay are described in the paper and not implemented anywhere.
 
-**How to say it.** As a strength: "I ran the experiment, it lost, I wrote the decision record, and I kept the ninety percent of the code that still applied." Interviewers hire for that more readily than for a thesis that never met reality.
+**How to say it.** As a strength: "The bet lost once llama.cpp offload landed. I wrote the decision record and kept the ninety percent of the code that still applied." Interviewers hire for that more readily than for a thesis that never met reality. Do not say you measured the split: the V2 doc calls it a confirmed dead end without citing a run, and no split benchmark exists in the repo.
 
 ## Paper 3: Containerized Intelligence
 
@@ -87,7 +89,9 @@ Legend: BUILT means code plus tests in the repo and merged to main. "Seam built"
 - "Is the consolidation node live?" No. The package is an `__init__.py`. Designed, scheduled after two members exist.
 - "Are the Jetsons running?" No. The hub endpoint and the embedder path for born-shared sensor events are built and tested with stubbed hardware. Hardware bring-up is Phase 2.
 - "What do the benchmarks say?" The bench harness exists with pre-registration discipline (win condition declared before the run, bootstrap CIs, guard-task regression tolerance). The only committed result artifact is a pipeline-shape demo against a stub provider. No real model result is published yet.
-- "How do you know privacy holds?" The filter is unconditional and server-side in `nodes/embedder_4070/scopes.py`, pure functions with their own unit tests. Cross-member writes are rejected with 400 before Chroma is touched. The briefing builder has no code path into a private scope and the test plants a private row to prove it.
+- "How do you know privacy holds?" The filter is unconditional and server-side in `nodes/embedder_4070/scopes.py`, pure functions with their own unit tests. Cross-member writes are rejected with 400 before Chroma is touched. The briefing builder has no code path into a private scope, and the briefing test queues a message with a marker phrase and asserts it never appears in the payload.
+- "Is the stack running right now?" It ran on the 4070 host over Tailscale for the Sprint 3d integration pass in June 2026. The Sprint 5 and 6 code merged 2026-09-02 with hermetic tests; the repo holds no recorded cold-start timing yet, so the first live boot of a member is the next milestone unless you have done it since.
+- "Have you swapped a model under a member yet?" No. One member, manual load and unload. Swap-and-validate (does Vera still recognize her own history on new weights) is the next bench task, and it is the paper's validation step.
 - "Why one model resident at a time?" 24 GB on the 4090. Co-residency of two large members loses to queue-and-swap, and the inbox with a 202 contract means a message to a sleeping member never hangs.
 - "Why MoE for Vera and dense for Jeffery?" MoE (30B total, roughly 3B active) gives near-small-model speed at 30B quality when all experts fit in 24 GB. On the 4070's 12 GB, total-weights residency is the constraint, so a dense 8B at Q5 beats any MoE that fits.
 - "What is the security posture?" Bearer tokens hashed with argon2id (scrypt fallback), the brainstem bound to the Tailscale interface only, status endpoints anonymous, everything that generates or writes authenticated, per-request token attribution in the metric record.
@@ -110,7 +114,7 @@ Legend: BUILT means code plus tests in the repo and merged to main. "Seam built"
 | Member #1 | Qwen3-30B-A3B-Instruct-2507, GGUF Q4_K_M, 32k context | `family/registry.yaml` |
 | Concierge | Qwen3-8B, GGUF Q5_K_M, 8k context, 4070-resident | `family/registry.yaml` |
 | Weight tiers | hot 2 TB NVMe Gen4, warm 1 TB NVMe Gen2, cold 6 TB HDD | V2 doc Section 7 |
-| Per-load metrics | `stage_copy_ms`, `load_ms`, presence transitions | `nodes/model_manager_4090/manager.py` |
+| Per-load metric fields (no recorded run in the repo yet) | `stage_copy_ms`, `load_ms`, presence transitions | `nodes/model_manager_4090/manager.py` |
 
 ## Suggested revisions (papers and repo)
 
